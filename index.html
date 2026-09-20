@@ -1,600 +1,747 @@
 <!doctype html>
 <html lang="en">
-
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Video Archive</title>
-  <style>
-    :root {
-      --bg: #0e0f11;
-      --panel: #16181b;
-      --panel2: #1d2024;
-      --border: #2a2d32;
-      --text: #e8e8e6;
-      --muted: #8b8f96;
-      --accent: #5ec9a6;
-      --accent-dim: #2c463d;
-      --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-      --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    }
-
-    * {
-      box-sizing: border-box
-    }
-
-    html,
-    body {
-      height: 100%
-    }
-
-    body {
-      margin: 0;
-      background: var(--bg);
-      color: var(--text);
-      font-family: var(--sans);
-      -webkit-font-smoothing: antialiased;
-    }
-
-    header {
-      padding: 20px 24px 16px;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      align-items: baseline;
-      gap: 14px;
-      flex-wrap: wrap;
-    }
-
-    header h1 {
-      font-size: 18px;
-      font-weight: 600;
-      margin: 0;
-      letter-spacing: .2px
-    }
-
-    header .stat {
-      color: var(--muted);
-      font-size: 13px;
-      font-family: var(--mono)
-    }
-
-    #status {
-      padding: 40px 24px;
-      color: var(--muted);
-      font-family: var(--mono);
-      font-size: 13px
-    }
-
-    #status a {
-      color: var(--accent)
-    }
-
-    #picker {
-      margin-top: 14px;
-      padding: 14px;
-      border: 1px dashed var(--border);
-      border-radius: 6px;
-      display: inline-block;
-    }
-
-    .toolbar {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      align-items: center;
-      padding: 14px 24px;
-      border-bottom: 1px solid var(--border);
-      background: var(--panel);
-    }
-
-    .toolbar input[type=text] {
-      background: var(--panel2);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 7px 10px;
-      border-radius: 5px;
-      font-size: 13px;
-      width: 260px;
-      font-family: var(--sans);
-    }
-
-    .toolbar select {
-      background: var(--panel2);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 7px 10px;
-      border-radius: 5px;
-      font-size: 13px;
-      font-family: var(--sans);
-    }
-
-    .toolbar input::placeholder {
-      color: var(--muted)
-    }
-
-    .toolbar .spacer {
-      flex: 1
-    }
-
-    .toolbar .count {
-      color: var(--muted);
-      font-size: 12px;
-      font-family: var(--mono)
-    }
-
-    #tablewrap {
-      overflow: auto;
-      height: calc(100vh - 128px)
-    }
-
-    table {
-      border-collapse: collapse;
-      width: 100%;
-      font-size: 13px
-    }
-
-    thead th {
-      position: sticky;
-      top: 0;
-      background: var(--panel);
-      text-align: left;
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--border);
-      cursor: pointer;
-      user-select: none;
-      color: var(--muted);
-      font-weight: 600;
-      font-size: 11.5px;
-      letter-spacing: .3px;
-      white-space: nowrap;
-    }
-
-    thead th:hover {
-      color: var(--text)
-    }
-
-    thead th.active {
-      color: var(--accent)
-    }
-
-    thead th .arrow {
-      opacity: .6;
-      margin-left: 3px;
-      font-size: 10px
-    }
-
-    tbody td {
-      padding: 8px 12px;
-      border-bottom: 1px solid var(--border);
-      vertical-align: middle;
-    }
-
-    tbody tr:hover {
-      background: var(--panel2)
-    }
-
-    td.thumb img {
-      width: 120px;
-      height: 68px;
-      object-fit: cover;
-      border-radius: 4px;
-      display: block;
-      background: var(--panel2);
-    }
-
-    td.title {
-      max-width: 420px
-    }
-
-    td.title a {
-      color: var(--text);
-      text-decoration: none;
-      font-weight: 500
-    }
-
-    td.title a:hover {
-      color: var(--accent);
-      text-decoration: underline
-    }
-
-    td.num {
-      font-family: var(--mono);
-      text-align: right;
-      white-space: nowrap;
-      color: var(--text)
-    }
-
-    td.type {
-      white-space: nowrap
-    }
-
-    .badge {
-      font-size: 11px;
-      font-family: var(--mono);
-      padding: 2px 7px;
-      border-radius: 10px;
-      border: 1px solid var(--border);
-      color: var(--muted);
-      text-transform: lowercase;
-    }
-
-    .badge.video {
-      color: #7fb3ff;
-      border-color: #2c3f5c
-    }
-
-    .badge.short {
-      color: #ffb37f;
-      border-color: #5c452c
-    }
-
-    .badge.stream {
-      color: var(--accent);
-      border-color: var(--accent-dim)
-    }
-
-    td.date {
-      white-space: nowrap;
-      color: var(--muted);
-      font-family: var(--mono);
-      font-size: 12px
-    }
-
-    .pager {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 12px 24px;
-      border-top: 1px solid var(--border);
-      background: var(--panel);
-      font-size: 13px;
-    }
-
-    .pager button {
-      background: var(--panel2);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 6px 12px;
-      border-radius: 5px;
-      cursor: pointer;
-      font-size: 13px;
-    }
-
-    .pager button:disabled {
-      opacity: .35;
-      cursor: default
-    }
-
-    .pager button:hover:not(:disabled) {
-      border-color: var(--accent)
-    }
-
-    .pager .spacer {
-      flex: 1
-    }
-
-    .pager .info {
-      color: var(--muted);
-      font-family: var(--mono);
-      font-size: 12px
-    }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video Archive</title>
+<style>
+  :root{
+    --bg:#0e0f11; --panel:#16181b; --panel2:#1d2024; --panel3:#24272c; --border:#2a2d32;
+    --text:#e8e8e6; --muted:#8b8f96; --accent:#5ec9a6; --accent-dim:#2c463d;
+    --mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--text); font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;
+  }
+  header{
+    padding:20px 24px 16px; border-bottom:1px solid var(--border);
+    display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+  }
+  header h1{font-size:18px; font-weight:600; margin:0; letter-spacing:.2px}
+  header .stat{color:var(--muted); font-size:13px; font-family:var(--mono)}
+  #status{padding:40px 24px; color:var(--muted); font-family:var(--mono); font-size:13px}
+  #status a{color:var(--accent)}
+  #picker{
+    margin-top:14px; padding:14px; border:1px dashed var(--border); border-radius:6px;
+    display:inline-block;
+  }
+  .toolbar{
+    display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+    padding:14px 24px; border-bottom:1px solid var(--border); background:var(--panel);
+    position:relative; z-index:5;
+  }
+  .toolbar input[type=text]{
+    background:var(--panel2); border:1px solid var(--border); color:var(--text);
+    padding:7px 10px; border-radius:5px; font-size:13px; width:240px; font-family:var(--sans);
+  }
+  .toolbar select{
+    background:var(--panel2); border:1px solid var(--border); color:var(--text);
+    padding:7px 10px; border-radius:5px; font-size:13px; font-family:var(--sans);
+  }
+  .toolbar input::placeholder{color:var(--muted)}
+  .toolbar .spacer{flex:1}
+  .toolbar .count{color:var(--muted); font-size:12px; font-family:var(--mono)}
+  .menu-btn{
+    background:var(--panel2); border:1px solid var(--border); color:var(--text);
+    padding:7px 12px; border-radius:5px; font-size:13px; cursor:pointer; font-family:var(--sans);
+  }
+  .menu-btn:hover{border-color:var(--accent)}
+  .menu-btn.on{border-color:var(--accent); color:var(--accent)}
+  .menu-wrap{position:relative}
+  .menu-panel{
+    display:none; position:absolute; top:calc(100% + 8px); left:0; z-index:20;
+    background:var(--panel3); border:1px solid var(--border); border-radius:8px;
+    padding:16px; box-shadow:0 8px 24px rgba(0,0,0,.4); width:320px;
+  }
+  .menu-panel.open{display:block}
+  .menu-panel h3{margin:0 0 10px; font-size:12px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); font-weight:600}
+  .field-row{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:9px}
+  .field-row label{font-size:12.5px; color:var(--text)}
+  .field-row .hint{font-size:11px; color:var(--muted); display:block; margin-top:1px}
+  .field-row input[type=number]{
+    width:80px; background:var(--panel2); border:1px solid var(--border); color:var(--text);
+    padding:5px 8px; border-radius:4px; font-size:13px; font-family:var(--mono);
+  }
+  .field-row input[type=checkbox]{accent-color:var(--accent); width:15px; height:15px}
+  .menu-panel .run-btn{
+    width:100%; margin-top:10px; background:var(--accent-dim); border:1px solid var(--accent);
+    color:var(--accent); padding:8px; border-radius:5px; cursor:pointer; font-size:13px; font-weight:600;
+  }
+  .menu-panel .run-btn:hover{background:var(--accent); color:#0e0f11}
+  .menu-panel .clear-btn{
+    width:100%; margin-top:6px; background:transparent; border:1px solid var(--border);
+    color:var(--muted); padding:6px; border-radius:5px; cursor:pointer; font-size:12px;
+  }
+  .col-list{max-height:280px; overflow-y:auto; margin:-2px 0 4px}
+  .col-item{display:flex; align-items:center; gap:8px; padding:5px 2px; font-size:13px}
+  .col-item input{accent-color:var(--accent)}
+  .col-item.required{opacity:.5}
+  #tablewrap{overflow:auto; height:calc(100vh - 128px)}
+  table{border-collapse:collapse; width:100%; font-size:13px}
+  thead th{
+    position:sticky; top:0; background:var(--panel); text-align:left; padding:10px 12px;
+    border-bottom:1px solid var(--border); cursor:pointer; user-select:none;
+    color:var(--muted); font-weight:600; font-size:11.5px; letter-spacing:.3px;
+    white-space:nowrap;
+  }
+  thead th.nosort{cursor:default}
+  thead th:hover{color:var(--text)}
+  thead th.active{color:var(--accent)}
+  thead th .arrow{opacity:.6; margin-left:3px; font-size:10px}
+  tbody td{
+    padding:8px 12px; border-bottom:1px solid var(--border); vertical-align:middle;
+  }
+  tbody tr:hover{background:var(--panel2)}
+  tbody tr.spiking{background:linear-gradient(90deg, rgba(94,201,166,.08), transparent 60%)}
+  td.thumb img{
+    width:120px; height:68px; object-fit:cover; border-radius:4px; display:block;
+    background:var(--panel2);
+  }
+  td.title{max-width:380px}
+  td.title a{color:var(--text); text-decoration:none; font-weight:500}
+  td.title a:hover{color:var(--accent); text-decoration:underline}
+  td.num{font-family:var(--mono); text-align:right; white-space:nowrap; color:var(--text)}
+  td.spike-pos{color:var(--accent); font-weight:600}
+  td.text{color:var(--text)}
+  td.longtext{max-width:320px; color:var(--muted); font-size:12.5px}
+  td.longtext span{
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  td.url a{color:var(--muted); font-family:var(--mono); font-size:12px; text-decoration:none}
+  td.url a:hover{color:var(--accent)}
+  td.bool{text-align:center}
+  .badge{
+    font-size:11px; font-family:var(--mono); padding:2px 7px; border-radius:10px;
+    border:1px solid var(--border); color:var(--muted); text-transform:lowercase;
+  }
+  .badge.video{color:#7fb3ff; border-color:#2c3f5c}
+  .badge.short{color:#ffb37f; border-color:#5c452c}
+  .badge.stream{color:var(--accent); border-color:var(--accent-dim)}
+  td.date{white-space:nowrap; color:var(--muted); font-family:var(--mono); font-size:12px}
+  .pager{
+    display:flex; align-items:center; gap:10px; padding:12px 24px;
+    border-top:1px solid var(--border); background:var(--panel); font-size:13px;
+  }
+  .pager button{
+    background:var(--panel2); border:1px solid var(--border); color:var(--text);
+    padding:6px 12px; border-radius:5px; cursor:pointer; font-size:13px;
+  }
+  .pager button:disabled{opacity:.35; cursor:default}
+  .pager button:hover:not(:disabled){border-color:var(--accent)}
+  .pager .spacer{flex:1}
+  .pager .info{color:var(--muted); font-family:var(--mono); font-size:12px}
+</style>
 </head>
-
 <body>
 
-  <header>
-    <h1>Video Archive</h1>
-    <span class="stat" id="header-stat"></span>
-  </header>
+<header>
+  <h1>Video Archive</h1>
+  <span class="stat" id="header-stat"></span>
+</header>
 
-  <div id="status">Loading database…</div>
+<div id="status">Loading database…</div>
 
-  <div class="toolbar" id="toolbar" style="display:none">
-    <input type="text" id="search" placeholder="Search titles…">
-    <select id="typeFilter">
-      <option value="">All types</option>
+<div class="toolbar" id="toolbar" style="display:none">
+  <input type="text" id="search" placeholder="Search titles…">
+  <select id="typeFilter"><option value="">All types</option></select>
+
+  <div class="menu-wrap">
+    <button class="menu-btn" id="spikeBtn">⚡ Spike finder</button>
+    <div class="menu-panel" id="spikePanel">
+      <h3>Find view spikes</h3>
+      <div class="field-row">
+        <label for="sf-window">Window<span class="hint">videos before/after used as baseline</span></label>
+        <input type="number" id="sf-window" value="6" min="1" max="50">
+      </div>
+      <div class="field-row">
+        <label for="sf-threshold">Threshold %<span class="hint">min. increase over baseline</span></label>
+        <input type="number" id="sf-threshold" value="100" min="0" step="10">
+      </div>
+      <div class="field-row">
+        <label for="sf-minneighbors">Min neighbors<span class="hint">required to compute a baseline</span></label>
+        <input type="number" id="sf-minneighbors" value="3" min="1" max="50">
+      </div>
+      <div class="field-row">
+        <label for="sf-minviews">Min views<span class="hint">ignore videos below this</span></label>
+        <input type="number" id="sf-minviews" value="0" min="0">
+      </div>
+      <div class="field-row">
+        <label for="sf-minage">Min age (days)<span class="hint">exclude very recent uploads</span></label>
+        <input type="number" id="sf-minage" value="0" min="0">
+      </div>
+      <div class="field-row">
+        <label for="sf-splittype">Split by video type<span class="hint">compare shorts/streams/videos separately</span></label>
+        <input type="checkbox" id="sf-splittype" checked>
+      </div>
+      <div class="field-row">
+        <label for="sf-onlyspikes">Show only spikes<span class="hint">hide everything else</span></label>
+        <input type="checkbox" id="sf-onlyspikes" checked>
+      </div>
+      <button class="run-btn" id="sf-run">Run spike finder</button>
+      <button class="clear-btn" id="sf-clear">Clear</button>
+    </div>
+  </div>
+
+  <div class="menu-wrap">
+    <button class="menu-btn" id="colsBtn">☰ Columns</button>
+    <div class="menu-panel" id="colsPanel">
+      <h3>Visible columns</h3>
+      <div class="col-list" id="colList"></div>
+    </div>
+  </div>
+
+  <span class="spacer"></span>
+  <span class="count" id="count"></span>
+</div>
+
+<div id="tablewrap" style="display:none">
+  <table>
+    <thead><tr id="headRow"></tr></thead>
+    <tbody id="body"></tbody>
+  </table>
+</div>
+
+<div class="pager" id="pager" style="display:none">
+  <button id="prevBtn">&larr; Prev</button>
+  <span class="info" id="pageInfo"></span>
+  <button id="nextBtn">Next &rarr;</button>
+  <span class="spacer"></span>
+  <label class="info">Rows per page
+    <select id="pageSize">
+      <option>25</option><option selected>50</option><option>100</option><option>250</option>
     </select>
-    <span class="spacer"></span>
-    <span class="count" id="count"></span>
-  </div>
+  </label>
+</div>
 
-  <div id="tablewrap" style="display:none">
-    <table>
-      <thead>
-        <tr id="headRow"></tr>
-      </thead>
-      <tbody id="body"></tbody>
-    </table>
-  </div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.14.2/sql-wasm.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+<script>
+// ---- Configuration -------------------------------------------------------
+// Name of the database file this page will try to load automatically,
+// expected to sit next to this index.html in the same repo/folder.
+// Can be a plain .sqlite3 file OR a gzip-compressed one (e.g. "videos.sqlite3.gz")
+// — gzip is auto-detected from the file's contents, so either works with no
+// other changes.
+const DB_FILENAME = "videos.sqlite3.gz";
 
-  <div class="pager" id="pager" style="display:none">
-    <button id="prevBtn">&larr; Prev</button>
-    <span class="info" id="pageInfo"></span>
-    <button id="nextBtn">Next &rarr;</button>
-    <span class="spacer"></span>
-    <label class="info">Rows per page
-      <select id="pageSize">
-        <option>25</option>
-        <option selected>50</option>
-        <option>100</option>
-        <option>250</option>
-      </select>
-    </label>
-  </div>
+// Known columns this page understands how to render, keyed by the exact
+// column name as it appears in the `videos` table. Any column present in
+// the database but NOT listed here still shows up (as a plain text column,
+// hidden by default) — this list only controls formatting/labels/defaults.
+// `required: true` columns can't be hidden via the Columns menu.
+const COLUMN_REGISTRY = {
+  thumbnail_url:   { label: "",          type: "thumb",  sortable: false, defaultVisible: true,  required: true },
+  title:           { label: "Title",     type: "title",  sortable: true,  defaultVisible: true,  required: true },
+  video_type:      { label: "Type",      type: "badge",  sortable: true,  defaultVisible: true },
+  upload_date:     { label: "Uploaded",  type: "date",   sortable: true,  defaultVisible: true },
+  duration_string: { label: "Duration",  type: "text",   sortable: true,  defaultVisible: true, sortKey: "duration_seconds" },
+  view_count:      { label: "Views",     type: "num",    sortable: true,  defaultVisible: true },
+  like_count:      { label: "Likes",     type: "num",    sortable: true,  defaultVisible: true },
+  comment_count:   { label: "Comments",  type: "num",    sortable: true,  defaultVisible: true },
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.14.2/sql-wasm.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
-  <script>
-    // ---- Configuration -------------------------------------------------------
-    // Name of the database file this page will try to load automatically,
-    // expected to sit next to this index.html in the same repo/folder.
-    // Can be a plain .sqlite3 file OR a gzip-compressed one (e.g. "videos.sqlite3.gz")
-    // — gzip is auto-detected from the file's contents, so either works with no
-    // other changes. Compressing is strongly recommended for large channels: it
-    // both shrinks the file GitHub has to store and speeds up the page load.
-    const DB_FILENAME = "videos.sqlite3.gz";
+  // Extra columns — shown only if you export them (see export_lean_db.py --keep)
+  video_id:        { label: "Video ID",     type: "text",     sortable: true,  defaultVisible: false },
+  webpage_url:     { label: "URL",          type: "url",      sortable: false, defaultVisible: false },
+  channel_name:    { label: "Channel",      type: "text",     sortable: true,  defaultVisible: false },
+  description:     { label: "Description",  type: "longtext", sortable: false, defaultVisible: false },
+  tags_json:       { label: "Tags",         type: "list",     sortable: false, defaultVisible: false },
+  categories_json: { label: "Categories",   type: "list",     sortable: false, defaultVisible: false },
+  availability:    { label: "Availability", type: "text",     sortable: true,  defaultVisible: false },
+  language:        { label: "Language",     type: "text",     sortable: true,  defaultVisible: false },
+  resolution:      { label: "Resolution",   type: "text",     sortable: true,  defaultVisible: false },
+  fps:             { label: "FPS",          type: "num",      sortable: true,  defaultVisible: false },
+  age_limit:       { label: "Age limit",    type: "num",      sortable: true,  defaultVisible: false },
+  is_live:         { label: "Live now",     type: "bool",     sortable: true,  defaultVisible: false },
+  was_live:        { label: "Was live",     type: "bool",     sortable: true,  defaultVisible: false },
+  live_status:     { label: "Live status",  type: "text",     sortable: true,  defaultVisible: false },
+  upload_timestamp:{ label: "Uploaded (exact)", type: "datetime", sortable: true, defaultVisible: false },
+  average_rating:  { label: "Rating",       type: "num",      sortable: true,  defaultVisible: false },
+  source_tab:      { label: "Found via",    type: "text",     sortable: true,  defaultVisible: false },
 
-    // Columns pulled from the `videos` table. Adjust if your schema differs.
-    const COLUMNS = [
-      {key: "thumbnail_url", label: "", sortable: false, type: "thumb"},
-      {key: "title", label: "Title", sortable: true, type: "title"},
-      {key: "video_type", label: "Type", sortable: true, type: "type"},
-      {key: "upload_date", label: "Uploaded", sortable: true, type: "date"},
-      {key: "duration_string", label: "Duration", sortable: true, type: "text", sortKey: "duration_seconds"},
-      {key: "view_count", label: "Views", sortable: true, type: "num"},
-      {key: "like_count", label: "Likes", sortable: true, type: "num"},
-      {key: "comment_count", label: "Comments", sortable: true, type: "num"},
-    ];
+  // Populated only after running the spike finder
+  spike_percent:   { label: "Spike %",   type: "spike", sortable: true, defaultVisible: false, synthetic: true },
+  spike_baseline:  { label: "Baseline",  type: "num",   sortable: true, defaultVisible: false, synthetic: true },
+};
 
-    // ---- State -----------------------------------------------------------
-    let allRows = [];
-    let filteredRows = [];
-    let sortKey = "upload_date";
-    let sortDir = "desc";
-    let page = 1;
-    let pageSize = 50;
+const LOCALSTORAGE_KEY = "ytarchive_visible_columns_v1";
 
-    const el = id => document.getElementById(id);
+// ---- State -----------------------------------------------------------
+let allRows = [];
+let filteredRows = [];
+let availableColumns = [];   // column keys actually present in this db (+ synthetic once computed)
+let visibleColumns = [];     // subset of availableColumns currently shown
+let sortKey = "upload_date";
+let sortDir = "desc";
+let page = 1;
+let pageSize = 50;
+let spikesComputed = false;
+let onlySpikes = true;
+let spikeThreshold = 100;
 
-    // ---- Load the database -------------------------------------------------
-    async function init() {
-      const SQL = await initSqlJs({
-        locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.14.2/${file}`
-      });
+const el = id => document.getElementById(id);
 
-      try {
-        const resp = await fetch(DB_FILENAME);
-        if (!resp.ok) throw new Error(`${DB_FILENAME} not found (HTTP ${resp.status})`);
-        const buf = new Uint8Array(await resp.arrayBuffer());
-        loadDatabase(SQL, maybeDecompress(buf));
-      } catch (err) {
-        showFilePicker(SQL, err.message);
-      }
-    }
+// ---- Load the database -------------------------------------------------
+async function init() {
+  const SQL = await initSqlJs({
+    locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.14.2/${file}`
+  });
 
-    // Gzip files start with the two magic bytes 0x1f 0x8b. Auto-detect so the
-    // same code path handles a plain .sqlite3 file or a gzip-compressed one.
-    function maybeDecompress(bytes) {
-      if (bytes.length > 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
-        return pako.inflate(bytes);
-      }
-      return bytes;
-    }
+  try {
+    const resp = await fetch(DB_FILENAME);
+    if (!resp.ok) throw new Error(`${DB_FILENAME} not found (HTTP ${resp.status})`);
+    const buf = new Uint8Array(await resp.arrayBuffer());
+    loadDatabase(SQL, maybeDecompress(buf));
+  } catch (err) {
+    showFilePicker(SQL, err.message);
+  }
+}
 
-    function showFilePicker(SQL, reason) {
-      el("status").innerHTML = `
+function maybeDecompress(bytes) {
+  if (bytes.length > 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) return pako.inflate(bytes);
+  return bytes;
+}
+
+function showFilePicker(SQL, reason) {
+  el("status").innerHTML = `
     Could not auto-load <code>${DB_FILENAME}</code> (${escapeHtml(reason)}).<br><br>
     Place your database file next to this page and name it
     <code>${DB_FILENAME}</code> (plain <code>.sqlite3</code> or gzip-compressed,
     either works), or pick one manually below:
     <div id="picker"><input type="file" id="fileInput" accept=".sqlite,.sqlite3,.db,.gz"></div>
   `;
-      el("fileInput").addEventListener("change", async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        const buf = new Uint8Array(await file.arrayBuffer());
-        loadDatabase(SQL, maybeDecompress(buf));
-      });
+  el("fileInput").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const buf = new Uint8Array(await file.arrayBuffer());
+    loadDatabase(SQL, maybeDecompress(buf));
+  });
+}
+
+function loadDatabase(SQL, bytes) {
+  const db = new SQL.Database(bytes);
+
+  const tableInfo = db.exec("PRAGMA table_info(videos)");
+  if (!tableInfo.length) {
+    el("status").textContent = "No `videos` table found in this database.";
+    return;
+  }
+  const dbColumns = tableInfo[0].values.map(row => row[1]); // row[1] = column name
+
+  // Anything in the db that we don't have a registry entry for still gets
+  // shown, as a generic text column, hidden by default.
+  dbColumns.forEach(col => {
+    if (!COLUMN_REGISTRY[col]) {
+      COLUMN_REGISTRY[col] = { label: prettify(col), type: "text", sortable: true, defaultVisible: false };
     }
+  });
 
-    function loadDatabase(SQL, bytes) {
-      const db = new SQL.Database(bytes);
-      const selectCols = [
-        "video_id", "webpage_url", "thumbnail_url", "title", "video_type",
-        "upload_date", "duration_string", "duration_seconds",
-        "view_count", "like_count", "comment_count",
-      ];
+  availableColumns = dbColumns.filter(c => COLUMN_REGISTRY[c]);
+  visibleColumns = loadVisibleColumnsPreference();
 
-      const res = db.exec(`SELECT ${selectCols.join(", ")} FROM videos`);
-      if (!res.length) {
-        el("status").textContent = "The database has a `videos` table but it's empty.";
-        return;
-      }
+  const selectCols = ["video_id", "webpage_url", ...dbColumns].filter((v, i, a) => a.indexOf(v) === i);
+  const res = db.exec(`SELECT ${selectCols.map(c => `"${c}"`).join(", ")} FROM videos`);
+  if (!res.length) {
+    el("status").textContent = "The database has a `videos` table but it's empty.";
+    return;
+  }
 
-      const columns = res[0].columns;
-      allRows = res[0].values.map(rowArr => {
-        const obj = {};
-        columns.forEach((c, i) => obj[c] = rowArr[i]);
-        return obj;
-      });
+  const cols = res[0].columns;
+  allRows = res[0].values.map(rowArr => {
+    const obj = {};
+    cols.forEach((c, i) => obj[c] = rowArr[i]);
+    obj._uploadTime = uploadTimeMs(obj);
+    return obj;
+  });
 
-      populateTypeFilter();
-      el("status").style.display = "none";
-      el("toolbar").style.display = "flex";
-      el("tablewrap").style.display = "block";
-      el("pager").style.display = "flex";
-      el("header-stat").textContent = `${allRows.length.toLocaleString()} videos`;
+  populateTypeFilter();
+  buildColumnsMenu();
+  el("status").style.display = "none";
+  el("toolbar").style.display = "flex";
+  el("tablewrap").style.display = "block";
+  el("pager").style.display = "flex";
+  el("header-stat").textContent = `${allRows.length.toLocaleString()} videos`;
 
+  buildHeader();
+  applyFiltersAndRender();
+}
+
+function uploadTimeMs(row) {
+  if (row.upload_timestamp) return row.upload_timestamp * 1000;
+  const d = row.upload_date;
+  if (d && String(d).length === 8) {
+    const s = String(d);
+    return Date.UTC(+s.slice(0,4), +s.slice(4,6) - 1, +s.slice(6,8));
+  }
+  return null;
+}
+
+function prettify(key) {
+  return key.replace(/_json$/, "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// ---- Columns menu -------------------------------------------------------
+function loadVisibleColumnsPreference() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LOCALSTORAGE_KEY) || "null");
+    if (Array.isArray(saved)) {
+      const restored = saved.filter(c => availableColumns.includes(c));
+      // always include required columns even if missing from saved state
+      availableColumns.forEach(c => { if (COLUMN_REGISTRY[c].required && !restored.includes(c)) restored.unshift(c); });
+      if (restored.length) return restored;
+    }
+  } catch (e) { /* ignore corrupt/blocked storage */ }
+  return availableColumns.filter(c => COLUMN_REGISTRY[c].defaultVisible);
+}
+
+function saveVisibleColumnsPreference() {
+  try { localStorage.setItem(LOCALSTORAGE_KEY, JSON.stringify(visibleColumns)); }
+  catch (e) { /* private browsing / storage disabled — non-fatal */ }
+}
+
+function buildColumnsMenu() {
+  const list = el("colList");
+  list.innerHTML = "";
+  availableColumns.forEach(key => {
+    const meta = COLUMN_REGISTRY[key];
+    if (meta.synthetic && !spikesComputed) return; // don't offer Spike %/Baseline until computed
+    const row = document.createElement("label");
+    row.className = "col-item" + (meta.required ? " required" : "");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = visibleColumns.includes(key);
+    cb.disabled = !!meta.required;
+    cb.addEventListener("change", () => {
+      if (cb.checked) visibleColumns.push(key);
+      else visibleColumns = visibleColumns.filter(c => c !== key);
+      saveVisibleColumnsPreference();
       buildHeader();
-      applyFiltersAndRender();
-    }
-
-    // ---- UI: header / filters ----------------------------------------------
-    function buildHeader() {
-      const row = el("headRow");
-      row.innerHTML = "";
-      COLUMNS.forEach(col => {
-        const th = document.createElement("th");
-        th.textContent = col.label;
-        if (col.sortable) {
-          th.addEventListener("click", () => {
-            const key = col.sortKey || col.key;
-            if (sortKey === key) sortDir = sortDir === "asc" ? "desc" : "asc";
-            else {sortKey = key; sortDir = key === "title" ? "asc" : "desc";}
-            page = 1;
-            applyFiltersAndRender();
-          });
-        }
-        row.appendChild(th);
-      });
-      updateHeaderIndicators();
-    }
-
-    function updateHeaderIndicators() {
-      const ths = el("headRow").children;
-      COLUMNS.forEach((col, i) => {
-        const key = col.sortKey || col.key;
-        const th = ths[i];
-        th.classList.toggle("active", key === sortKey);
-        th.innerHTML = col.label + (key === sortKey
-          ? `<span class="arrow">${sortDir === "asc" ? "▲" : "▼"}</span>` : "");
-      });
-    }
-
-    function populateTypeFilter() {
-      const types = [...new Set(allRows.map(r => r.video_type).filter(Boolean))].sort();
-      const sel = el("typeFilter");
-      types.forEach(t => {
-        const opt = document.createElement("option");
-        opt.value = t; opt.textContent = t;
-        sel.appendChild(opt);
-      });
-    }
-
-    el("search").addEventListener("input", () => {page = 1; applyFiltersAndRender();});
-    el("typeFilter").addEventListener("change", () => {page = 1; applyFiltersAndRender();});
-    el("pageSize").addEventListener("change", (e) => {pageSize = parseInt(e.target.value, 10); page = 1; render();});
-    el("prevBtn").addEventListener("click", () => {if (page > 1) {page--; render();} });
-    el("nextBtn").addEventListener("click", () => {
-      if (page < Math.ceil(filteredRows.length / pageSize)) {page++; render();}
-    });
-
-    // ---- Filtering / sorting -------------------------------------------------
-    function applyFiltersAndRender() {
-      const q = el("search").value.trim().toLowerCase();
-      const type = el("typeFilter").value;
-
-      filteredRows = allRows.filter(r => {
-        if (type && r.video_type !== type) return false;
-        if (q && !(r.title || "").toLowerCase().includes(q)) return false;
-        return true;
-      });
-
-      filteredRows.sort((a, b) => {
-        let av = a[sortKey], bv = b[sortKey];
-        if (av == null) av = sortDir === "asc" ? Infinity : -Infinity;
-        if (bv == null) bv = sortDir === "asc" ? Infinity : -Infinity;
-        if (typeof av === "string") av = av.toLowerCase();
-        if (typeof bv === "string") bv = bv.toLowerCase();
-        if (av < bv) return sortDir === "asc" ? -1 : 1;
-        if (av > bv) return sortDir === "asc" ? 1 : -1;
-        return 0;
-      });
-
-      updateHeaderIndicators();
       render();
-    }
+    });
+    row.appendChild(cb);
+    row.appendChild(document.createTextNode(meta.label || prettify(key)));
+    list.appendChild(row);
+  });
+}
 
-    // ---- Rendering -------------------------------------------------------
-    function render() {
-      const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
-      if (page > totalPages) page = totalPages;
-      const start = (page - 1) * pageSize;
-      const pageRows = filteredRows.slice(start, start + pageSize);
-
-      const body = el("body");
-      body.innerHTML = "";
-      const frag = document.createDocumentFragment();
-
-      pageRows.forEach(r => {
-        const tr = document.createElement("tr");
-
-        const tdThumb = document.createElement("td");
-        tdThumb.className = "thumb";
-        if (r.thumbnail_url) {
-          const img = document.createElement("img");
-          img.src = r.thumbnail_url; img.loading = "lazy"; img.alt = "";
-          tdThumb.appendChild(img);
-        }
-        tr.appendChild(tdThumb);
-
-        const tdTitle = document.createElement("td");
-        tdTitle.className = "title";
-        const a = document.createElement("a");
-        a.href = r.webpage_url || "#";
-        a.target = "_blank"; a.rel = "noopener";
-        a.textContent = r.title || "(untitled)";
-        tdTitle.appendChild(a);
-        tr.appendChild(tdTitle);
-
-        const tdType = document.createElement("td");
-        tdType.className = "type";
-        if (r.video_type) {
-          const badge = document.createElement("span");
-          badge.className = "badge " + r.video_type;
-          badge.textContent = r.video_type;
-          tdType.appendChild(badge);
-        }
-        tr.appendChild(tdType);
-
-        const tdDate = document.createElement("td");
-        tdDate.className = "date";
-        tdDate.textContent = formatDate(r.upload_date);
-        tr.appendChild(tdDate);
-
-        const tdDur = document.createElement("td");
-        tdDur.className = "num";
-        tdDur.textContent = r.duration_string || (r.duration_seconds ? formatDuration(r.duration_seconds) : "—");
-        tr.appendChild(tdDur);
-
-        ["view_count", "like_count", "comment_count"].forEach(k => {
-          const td = document.createElement("td");
-          td.className = "num";
-          td.textContent = r[k] != null ? Number(r[k]).toLocaleString() : "—";
-          tr.appendChild(td);
-        });
-
-        frag.appendChild(tr);
+// ---- UI: header / filters ----------------------------------------------
+function buildHeader() {
+  const row = el("headRow");
+  row.innerHTML = "";
+  visibleColumns.forEach(key => {
+    const meta = COLUMN_REGISTRY[key];
+    const th = document.createElement("th");
+    if (!meta.sortable) th.classList.add("nosort");
+    row.appendChild(th);
+    if (meta.sortable) {
+      th.addEventListener("click", () => {
+        const sk = meta.sortKey || key;
+        if (sortKey === sk) sortDir = sortDir === "asc" ? "desc" : "asc";
+        else { sortKey = sk; sortDir = (meta.type === "title" || meta.type === "text") ? "asc" : "desc"; }
+        page = 1;
+        applyFiltersAndRender();
       });
+    }
+  });
+  updateHeaderIndicators();
+}
 
-      body.appendChild(frag);
-      el("count").textContent = `${filteredRows.length.toLocaleString()} match${filteredRows.length === 1 ? "" : "es"}`;
-      el("pageInfo").textContent = `Page ${page} of ${totalPages}`;
-      el("prevBtn").disabled = page <= 1;
-      el("nextBtn").disabled = page >= totalPages;
-    }
+function updateHeaderIndicators() {
+  const ths = el("headRow").children;
+  visibleColumns.forEach((key, i) => {
+    const meta = COLUMN_REGISTRY[key];
+    const sk = meta.sortKey || key;
+    const th = ths[i];
+    th.classList.toggle("active", sk === sortKey);
+    th.innerHTML = (meta.label || prettify(key)) +
+      (sk === sortKey ? `<span class="arrow">${sortDir === "asc" ? "▲" : "▼"}</span>` : "");
+  });
+}
 
-    // ---- Helpers -------------------------------------------------------
-    function formatDate(yyyymmdd) {
-      if (!yyyymmdd || String(yyyymmdd).length !== 8) return "—";
-      const s = String(yyyymmdd);
-      return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
-    }
-    function formatDuration(sec) {
-      sec = Math.round(sec);
-      const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
-      const pad = n => String(n).padStart(2, "0");
-      return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
-    }
-    function escapeHtml(str) {
-      const d = document.createElement("div");
-      d.textContent = str;
-      return d.innerHTML;
-    }
+function populateTypeFilter() {
+  const types = [...new Set(allRows.map(r => r.video_type).filter(Boolean))].sort();
+  const sel = el("typeFilter");
+  types.forEach(t => {
+    const opt = document.createElement("option");
+    opt.value = t; opt.textContent = t;
+    sel.appendChild(opt);
+  });
+}
 
-    init();
-  </script>
+el("search").addEventListener("input", () => { page = 1; applyFiltersAndRender(); });
+el("typeFilter").addEventListener("change", () => { page = 1; applyFiltersAndRender(); });
+el("pageSize").addEventListener("change", (e) => { pageSize = parseInt(e.target.value, 10); page = 1; render(); });
+el("prevBtn").addEventListener("click", () => { if (page > 1) { page--; render(); } });
+el("nextBtn").addEventListener("click", () => {
+  if (page < Math.ceil(filteredRows.length / pageSize)) { page++; render(); }
+});
+
+// ---- Dropdown menu open/close -------------------------------------------
+function setupMenu(btnId, panelId) {
+  const btn = el(btnId), panel = el(panelId);
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const willOpen = !panel.classList.contains("open");
+    document.querySelectorAll(".menu-panel").forEach(p => p.classList.remove("open"));
+    document.querySelectorAll(".menu-btn").forEach(b => b.classList.remove("on"));
+    if (willOpen) { panel.classList.add("open"); btn.classList.add("on"); }
+  });
+  panel.addEventListener("click", (e) => e.stopPropagation());
+}
+setupMenu("spikeBtn", "spikePanel");
+setupMenu("colsBtn", "colsPanel");
+document.addEventListener("click", () => {
+  document.querySelectorAll(".menu-panel").forEach(p => p.classList.remove("open"));
+  document.querySelectorAll(".menu-btn").forEach(b => b.classList.remove("on"));
+});
+
+// ---- Spike finder --------------------------------------------------------
+// Same algorithm as find_view_spikes.py: for each video, compare its view
+// count to the median of the `window` nearest videos before/after it on
+// the same channel timeline (optionally split by video_type), so a spike
+// is measured against the channel's own audience size at the time.
+function median(nums) {
+  const s = [...nums].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+function computeSpikes({ window: win, minNeighbors, minViews, minAgeDays, splitByType }) {
+  const now = Date.now();
+  const minAgeMs = minAgeDays * 86400000;
+
+  const groups = splitByType
+    ? Object.values(groupBy(allRows.filter(r => r._uploadTime != null), r => r.video_type || "unknown"))
+    : [allRows.filter(r => r._uploadTime != null)];
+
+  allRows.forEach(r => { r.spike_percent = null; r.spike_baseline = null; });
+
+  groups.forEach(group => {
+    const sorted = [...group].sort((a, b) => a._uploadTime - b._uploadTime);
+    sorted.forEach((row, i) => {
+      if (row.view_count == null || row.view_count < minViews) return;
+      if (minAgeDays > 0 && (now - row._uploadTime) < minAgeMs) return;
+
+      const before = sorted.slice(Math.max(0, i - win), i);
+      const after = sorted.slice(i + 1, i + 1 + win);
+      const neighborViews = [...before, ...after].map(v => v.view_count).filter(v => v != null);
+      if (neighborViews.length < minNeighbors) return;
+
+      const baseline = median(neighborViews);
+      if (baseline <= 0) return;
+
+      row.spike_percent = (row.view_count - baseline) / baseline * 100;
+      row.spike_baseline = baseline;
+    });
+  });
+
+  spikesComputed = true;
+  if (!availableColumns.includes("spike_percent")) availableColumns.push("spike_percent", "spike_baseline");
+  if (!visibleColumns.includes("spike_percent")) visibleColumns.push("spike_percent");
+  if (!visibleColumns.includes("spike_baseline")) visibleColumns.push("spike_baseline");
+}
+
+function groupBy(arr, fn) {
+  return arr.reduce((acc, item) => {
+    const k = fn(item);
+    (acc[k] = acc[k] || []).push(item);
+    return acc;
+  }, {});
+}
+
+el("sf-run").addEventListener("click", () => {
+  const opts = {
+    window: parseInt(el("sf-window").value, 10) || 1,
+    minNeighbors: parseInt(el("sf-minneighbors").value, 10) || 1,
+    minViews: parseInt(el("sf-minviews").value, 10) || 0,
+    minAgeDays: parseInt(el("sf-minage").value, 10) || 0,
+    splitByType: el("sf-splittype").checked,
+  };
+  spikeThreshold = parseFloat(el("sf-threshold").value) || 0;
+  onlySpikes = el("sf-onlyspikes").checked;
+  computeSpikes(opts);
+  buildColumnsMenu();
+  buildHeader();
+  sortKey = "spike_percent"; sortDir = "desc"; page = 1;
+  applyFiltersAndRender();
+});
+
+el("sf-clear").addEventListener("click", () => {
+  spikesComputed = false;
+  onlySpikes = false;
+  allRows.forEach(r => { r.spike_percent = null; r.spike_baseline = null; });
+  visibleColumns = visibleColumns.filter(c => c !== "spike_percent" && c !== "spike_baseline");
+  availableColumns = availableColumns.filter(c => c !== "spike_percent" && c !== "spike_baseline");
+  if (sortKey === "spike_percent") { sortKey = "upload_date"; sortDir = "desc"; }
+  buildColumnsMenu();
+  buildHeader();
+  page = 1;
+  applyFiltersAndRender();
+});
+
+// ---- Filtering / sorting -------------------------------------------------
+function applyFiltersAndRender() {
+  const q = el("search").value.trim().toLowerCase();
+  const type = el("typeFilter").value;
+
+  filteredRows = allRows.filter(r => {
+    if (type && r.video_type !== type) return false;
+    if (q && !(r.title || "").toLowerCase().includes(q)) return false;
+    if (spikesComputed && onlySpikes && !(r.spike_percent != null && r.spike_percent >= spikeThreshold)) return false;
+    return true;
+  });
+
+  filteredRows.sort((a, b) => {
+    let av = a[sortKey], bv = b[sortKey];
+    if (av == null) av = sortDir === "asc" ? Infinity : -Infinity;
+    if (bv == null) bv = sortDir === "asc" ? Infinity : -Infinity;
+    if (typeof av === "string") av = av.toLowerCase();
+    if (typeof bv === "string") bv = bv.toLowerCase();
+    if (av < bv) return sortDir === "asc" ? -1 : 1;
+    if (av > bv) return sortDir === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  updateHeaderIndicators();
+  render();
+}
+
+// ---- Rendering -------------------------------------------------------
+function render() {
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  if (page > totalPages) page = totalPages;
+  const start = (page - 1) * pageSize;
+  const pageRows = filteredRows.slice(start, start + pageSize);
+
+  const body = el("body");
+  body.innerHTML = "";
+  const frag = document.createDocumentFragment();
+
+  pageRows.forEach(r => {
+    const tr = document.createElement("tr");
+    if (spikesComputed && r.spike_percent != null && r.spike_percent >= spikeThreshold) {
+      tr.classList.add("spiking");
+    }
+    visibleColumns.forEach(key => frag_appendCell(tr, r, key));
+    frag.appendChild(tr);
+  });
+
+  body.appendChild(frag);
+  el("count").textContent = `${filteredRows.length.toLocaleString()} match${filteredRows.length === 1 ? "" : "es"}`;
+  el("pageInfo").textContent = `Page ${page} of ${totalPages}`;
+  el("prevBtn").disabled = page <= 1;
+  el("nextBtn").disabled = page >= totalPages;
+}
+
+function frag_appendCell(tr, r, key) {
+  const meta = COLUMN_REGISTRY[key];
+  const td = document.createElement("td");
+
+  switch (meta.type) {
+    case "thumb": {
+      td.className = "thumb";
+      if (r.thumbnail_url) {
+        const img = document.createElement("img");
+        img.src = r.thumbnail_url; img.loading = "lazy"; img.alt = "";
+        td.appendChild(img);
+      }
+      break;
+    }
+    case "title": {
+      td.className = "title";
+      const a = document.createElement("a");
+      a.href = r.webpage_url || "#"; a.target = "_blank"; a.rel = "noopener";
+      a.textContent = r.title || "(untitled)";
+      td.appendChild(a);
+      break;
+    }
+    case "badge": {
+      const v = r[key];
+      if (v) {
+        const badge = document.createElement("span");
+        badge.className = "badge " + v;
+        badge.textContent = v;
+        td.appendChild(badge);
+      }
+      break;
+    }
+    case "date": {
+      td.className = "date";
+      td.textContent = formatDate(r[key]);
+      break;
+    }
+    case "datetime": {
+      td.className = "date";
+      td.textContent = r[key] ? new Date(r[key] * 1000).toISOString().replace("T", " ").slice(0, 19) : "—";
+      break;
+    }
+    case "num": {
+      td.className = "num";
+      const v = r[key];
+      td.textContent = v != null ? Number(v).toLocaleString(undefined, { maximumFractionDigits: 1 }) : "—";
+      break;
+    }
+    case "spike": {
+      td.className = "num" + (r[key] != null && r[key] >= spikeThreshold ? " spike-pos" : "");
+      td.textContent = r[key] != null ? `${r[key] >= 0 ? "+" : ""}${r[key].toFixed(0)}%` : "—";
+      break;
+    }
+    case "bool": {
+      td.className = "bool";
+      td.textContent = r[key] ? "✓" : "–";
+      break;
+    }
+    case "url": {
+      td.className = "url";
+      if (r[key]) {
+        const a = document.createElement("a");
+        a.href = r[key]; a.target = "_blank"; a.rel = "noopener";
+        a.textContent = r[key].replace(/^https?:\/\//, "");
+        td.appendChild(a);
+      }
+      break;
+    }
+    case "longtext": {
+      td.className = "longtext";
+      const span = document.createElement("span");
+      span.textContent = r[key] || "—";
+      span.title = r[key] || "";
+      td.appendChild(span);
+      break;
+    }
+    case "list": {
+      td.className = "text";
+      try {
+        const arr = JSON.parse(r[key] || "[]");
+        td.textContent = Array.isArray(arr) ? arr.join(", ") : (r[key] || "—");
+      } catch (e) { td.textContent = r[key] || "—"; }
+      break;
+    }
+    default: {
+      td.className = "text";
+      td.textContent = r[key] != null && r[key] !== "" ? r[key] : "—";
+    }
+  }
+
+  tr.appendChild(td);
+}
+
+// ---- Helpers -------------------------------------------------------
+function formatDate(yyyymmdd) {
+  if (!yyyymmdd || String(yyyymmdd).length !== 8) return "—";
+  const s = String(yyyymmdd);
+  return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
+}
+function escapeHtml(str) {
+  const d = document.createElement("div");
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+init();
+</script>
 </body>
-
 </html>

@@ -31,9 +31,17 @@ import sys
 from pathlib import Path
 
 DEFAULT_COLUMNS = [
-    "video_id", "webpage_url", "thumbnail_url", "title", "video_type",
-    "upload_date", "duration_string", "duration_seconds",
-    "view_count", "like_count", "comment_count",
+    "video_id",
+    "webpage_url",
+    "thumbnail_url",
+    "title",
+    "video_type",
+    "upload_date",
+    "duration_string",
+    "duration_seconds",
+    "view_count",
+    "like_count",
+    "comment_count",
 ]
 
 
@@ -54,8 +62,11 @@ def export_lean(src_path: str, dst_path: str, columns: list) -> None:
     existing = {row[1] for row in src.execute("PRAGMA table_info(videos)")}
     missing = [c for c in columns if c not in existing]
     if missing:
-        print(f"Warning: these columns aren't in the source db and will be skipped: "
-              f"{', '.join(missing)}", file=sys.stderr)
+        print(
+            f"Warning: these columns aren't in the source db and will be skipped: "
+            f"{', '.join(missing)}",
+            file=sys.stderr,
+        )
         columns = [c for c in columns if c in existing]
 
     Path(dst_path).unlink(missing_ok=True)
@@ -66,8 +77,10 @@ def export_lean(src_path: str, dst_path: str, columns: list) -> None:
 
     rows = src.execute(f"SELECT {col_defs} FROM videos").fetchall()
     placeholders = ", ".join("?" for _ in columns)
-    dst.executemany(f"INSERT INTO videos ({col_defs}) VALUES ({placeholders})",
-                     [tuple(row) for row in rows])
+    dst.executemany(
+        f"INSERT INTO videos ({col_defs}) VALUES ({placeholders})",
+        [tuple(row) for row in rows],
+    )
     dst.execute("CREATE INDEX IF NOT EXISTS idx_lean_type ON videos(video_type)")
     dst.commit()
 
@@ -90,14 +103,21 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Export a lean, web-ready copy of a channel archive database for GitHub Pages.",
     )
-    parser.add_argument("source_db", help="Path to the full database from youtube_channel_archiver.py")
-    parser.add_argument("output_db", help="Path to write the lean copy to (e.g. videos.sqlite3)")
     parser.add_argument(
-        "--keep", nargs="+", default=[],
+        "source_db", help="Path to the full database from youtube_channel_archiver.py"
+    )
+    parser.add_argument(
+        "output_db", help="Path to write the lean copy to (e.g. videos.sqlite3)"
+    )
+    parser.add_argument(
+        "--keep",
+        nargs="+",
+        default=[],
         help="Extra column names to keep in addition to the defaults",
     )
     parser.add_argument(
-        "--gzip", action="store_true",
+        "--gzip",
+        action="store_true",
         help="Also write a gzip-compressed copy (output_db + '.gz') for an even smaller push",
     )
     return parser.parse_args(argv)
@@ -111,17 +131,25 @@ def main(argv=None) -> None:
     export_lean(args.source_db, args.output_db, columns)
     after = Path(args.output_db).stat().st_size
 
-    print(f"{human_size(before)} -> {human_size(after)} "
-          f"({100 * (1 - after / before):.0f}% smaller)")
+    print(
+        f"{human_size(before)} -> {human_size(after)} "
+        f"({100 * (1 - after / before):.0f}% smaller)"
+    )
 
     if args.gzip:
         gz_path = gzip_file(args.output_db)
         gz_size = Path(gz_path).stat().st_size
-        print(f"Gzipped: {gz_path} ({human_size(gz_size)}, "
-              f"{100 * (1 - gz_size / after):.0f}% smaller than uncompressed lean db)")
-        print(f"\nCommit '{gz_path}' to your repo and set DB_FILENAME to its name in index.html.")
+        print(
+            f"Gzipped: {gz_path} ({human_size(gz_size)}, "
+            f"{100 * (1 - gz_size / after):.0f}% smaller than uncompressed lean db)"
+        )
+        print(
+            f"\nCommit '{gz_path}' to your repo and set DB_FILENAME to its name in index.html."
+        )
     else:
-        print(f"\nCommit '{args.output_db}' to your repo (or rerun with --gzip for an even smaller file).")
+        print(
+            f"\nCommit '{args.output_db}' to your repo (or rerun with --gzip for an even smaller file)."
+        )
 
 
 if __name__ == "__main__":

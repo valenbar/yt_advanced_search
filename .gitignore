@@ -1,0 +1,9 @@
+# Nix
+result*
+
+# Misc
+.direnv
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+cookies*.txt

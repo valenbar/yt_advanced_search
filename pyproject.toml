@@ -1,0 +1,12 @@
+[project]
+name = "packagename"
+version = "0.0.0"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+packagename = "main:main"
+
+[build-system]
+requires = ["setuptools-scm", "setuptools >= 40.9.0", "yt-dlp"]
+build-backend = "setuptools.build_meta"

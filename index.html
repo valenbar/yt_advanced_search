@@ -177,6 +177,11 @@
         <label for="f-durmax">Max length (min)</label>
         <input type="number" id="f-durmax" min="0" step="1" placeholder="—">
       </div>
+      <div class="field-row" style="display:block">
+        <label for="f-excludetitle" style="display:block; margin-bottom:4px">Exclude titles containing</label>
+        <input type="text" id="f-excludetitle" placeholder="e.g. xyz, teaser" style="width:100%">
+        <span class="hint">comma-separated, case-insensitive</span>
+      </div>
       <div class="field-row">
         <label for="f-minviews">Min views</label>
         <input type="number" id="f-minviews" min="0" step="1" placeholder="—">
@@ -588,7 +593,7 @@ function buildAvailabilityFilter() {
 el("search").addEventListener("input", () => { clearSpikes(); page = 1; applyFiltersAndRender(); });
 
 
-["f-datefrom", "f-dateto", "f-durmin", "f-durmax", "f-minviews"].forEach(id => {
+["f-datefrom", "f-dateto", "f-durmin", "f-durmax", "f-minviews", "f-excludetitle"].forEach(id => {
   el(id).addEventListener("input", () => {
     clearSpikes();
     updateFiltersBtnState();
@@ -598,7 +603,7 @@ el("search").addEventListener("input", () => { clearSpikes(); page = 1; applyFil
 });
 
 el("f-clear").addEventListener("click", () => {
-  ["f-datefrom", "f-dateto", "f-durmin", "f-durmax", "f-minviews"].forEach(id => { el(id).value = ""; });
+  ["f-datefrom", "f-dateto", "f-durmin", "f-durmax", "f-minviews", "f-excludetitle"].forEach(id => { el(id).value = ""; });
   if (availableColumns.includes("availability")) {
     selectedAvailability = new Set(availabilityValues);
     el("availList").querySelectorAll("input[type=checkbox]").forEach(cb => { cb.checked = true; });
@@ -610,7 +615,7 @@ el("f-clear").addEventListener("click", () => {
 });
 
 function updateFiltersBtnState() {
-  const fieldsActive = ["f-datefrom", "f-dateto", "f-durmin", "f-durmax", "f-minviews"].some(id => el(id).value !== "");
+  const fieldsActive = ["f-datefrom", "f-dateto", "f-durmin", "f-durmax", "f-minviews", "f-excludetitle"].some(id => el(id).value !== "");
   const availabilityActive = availableColumns.includes("availability")
     && selectedAvailability.size < availabilityValues.length;
   el("filtersBtn").classList.toggle("filled", fieldsActive || availabilityActive);
@@ -757,10 +762,15 @@ function getBaseFilteredRows() {
   const durMinSec = el("f-durmin").value !== "" ? parseFloat(el("f-durmin").value) * 60 : null;
   const durMaxSec = el("f-durmax").value !== "" ? parseFloat(el("f-durmax").value) * 60 : null;
   const minViews = el("f-minviews").value !== "" ? parseFloat(el("f-minviews").value) : null;
+  const excludeTerms = el("f-excludetitle").value.split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
 
   return allRows.filter(r => {
     if (!selectedTypes.has(r.video_type || "(unknown)")) return false;
     if (q && !(r.title || "").toLowerCase().includes(q)) return false;
+    if (excludeTerms.length) {
+      const titleLower = (r.title || "").toLowerCase();
+      if (excludeTerms.some(term => titleLower.includes(term))) return false;
+    }
 
     if (dateFrom) { if (!r._uploadDateStr || r._uploadDateStr < dateFrom) return false; }
     if (dateTo)   { if (!r._uploadDateStr || r._uploadDateStr > dateTo) return false; }

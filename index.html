@@ -148,7 +148,14 @@
 
 <div class="toolbar" id="toolbar" style="display:none">
   <input type="text" id="search" placeholder="Search titles…">
-  <select id="typeFilter"><option value="">All types</option></select>
+
+  <div class="menu-wrap">
+    <button class="menu-btn" id="typeBtn">Type</button>
+    <div class="menu-panel" id="typePanel">
+      <h3>Video type</h3>
+      <div class="col-list" id="typeList"></div>
+    </div>
+  </div>
 
   <div class="menu-wrap">
     <button class="menu-btn" id="filtersBtn">▤ Filters</button>
@@ -289,7 +296,7 @@ const COLUMN_REGISTRY = {
   description:     { label: "Description",  type: "longtext", sortable: false, defaultVisible: false },
   tags_json:       { label: "Tags",         type: "list",     sortable: false, defaultVisible: false },
   categories_json: { label: "Categories",   type: "list",     sortable: false, defaultVisible: false },
-  availability:    { label: "Availability", type: "text",     sortable: true,  defaultVisible: false },
+  availability:    { label: "Availability", type: "text",     sortable: true,  defaultVisible: true },
   language:        { label: "Language",     type: "text",     sortable: true,  defaultVisible: false },
   resolution:      { label: "Resolution",   type: "text",     sortable: true,  defaultVisible: false },
   fps:             { label: "FPS",          type: "num",      sortable: true,  defaultVisible: false },
@@ -322,6 +329,8 @@ let onlySpikes = true;
 let spikeThreshold = 100;
 let availabilityValues = [];         // distinct values found in the db, e.g. ["public", "subscriber_only", ...]
 let selectedAvailability = new Set(); // currently checked/visible values
+let typeValues = [];                 // distinct video_type values found, e.g. ["video", "short", "stream"]
+let selectedTypes = new Set();       // currently checked/visible types
 
 const el = id => document.getElementById(id);
 
@@ -399,7 +408,7 @@ function loadDatabase(SQL, bytes) {
     return obj;
   });
 
-  populateTypeFilter();
+  buildTypeFilter();
   buildAvailabilityFilter();
   buildColumnsMenu();
   el("status").style.display = "none";
@@ -513,14 +522,34 @@ function updateHeaderIndicators() {
   });
 }
 
-function populateTypeFilter() {
-  const types = [...new Set(allRows.map(r => r.video_type).filter(Boolean))].sort();
-  const sel = el("typeFilter");
-  types.forEach(t => {
-    const opt = document.createElement("option");
-    opt.value = t; opt.textContent = t;
-    sel.appendChild(opt);
+function buildTypeFilter() {
+  typeValues = [...new Set(allRows.map(r => r.video_type || "(unknown)"))].sort();
+  selectedTypes = new Set(typeValues); // all selected by default = no filtering
+
+  const list = el("typeList");
+  list.innerHTML = "";
+  typeValues.forEach(val => {
+    const row = document.createElement("label");
+    row.className = "col-item";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = true;
+    cb.addEventListener("change", () => {
+      if (cb.checked) selectedTypes.add(val);
+      else selectedTypes.delete(val);
+      clearSpikes();
+      updateTypeBtnState();
+      page = 1;
+      applyFiltersAndRender();
+    });
+    row.appendChild(cb);
+    row.appendChild(document.createTextNode(prettify(val)));
+    list.appendChild(row);
   });
+}
+
+function updateTypeBtnState() {
+  el("typeBtn").classList.toggle("filled", selectedTypes.size < typeValues.length);
 }
 
 function buildAvailabilityFilter() {
@@ -557,7 +586,7 @@ function buildAvailabilityFilter() {
 }
 
 el("search").addEventListener("input", () => { clearSpikes(); page = 1; applyFiltersAndRender(); });
-el("typeFilter").addEventListener("change", () => { clearSpikes(); page = 1; applyFiltersAndRender(); });
+
 
 ["f-datefrom", "f-dateto", "f-durmin", "f-durmax", "f-minviews"].forEach(id => {
   el(id).addEventListener("input", () => {
@@ -607,6 +636,7 @@ function setupMenu(btnId, panelId) {
 setupMenu("spikeBtn", "spikePanel");
 setupMenu("colsBtn", "colsPanel");
 setupMenu("filtersBtn", "filtersPanel");
+setupMenu("typeBtn", "typePanel");
 document.addEventListener("click", () => {
   document.querySelectorAll(".menu-panel").forEach(p => p.classList.remove("open"));
   document.querySelectorAll(".menu-btn").forEach(b => b.classList.remove("on"));
@@ -722,7 +752,6 @@ el("sf-threshold").addEventListener("input", () => {
 // ---- Filtering / sorting -------------------------------------------------
 function getBaseFilteredRows() {
   const q = el("search").value.trim().toLowerCase();
-  const type = el("typeFilter").value;
   const dateFrom = el("f-datefrom").value.replace(/-/g, "");   // "" or "YYYYMMDD"
   const dateTo = el("f-dateto").value.replace(/-/g, "");
   const durMinSec = el("f-durmin").value !== "" ? parseFloat(el("f-durmin").value) * 60 : null;
@@ -730,7 +759,7 @@ function getBaseFilteredRows() {
   const minViews = el("f-minviews").value !== "" ? parseFloat(el("f-minviews").value) : null;
 
   return allRows.filter(r => {
-    if (type && r.video_type !== type) return false;
+    if (!selectedTypes.has(r.video_type || "(unknown)")) return false;
     if (q && !(r.title || "").toLowerCase().includes(q)) return false;
 
     if (dateFrom) { if (!r._uploadDateStr || r._uploadDateStr < dateFrom) return false; }

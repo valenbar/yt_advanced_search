@@ -16,9 +16,10 @@ Usage:
     python export_lean_db.py full.sqlite3 videos.sqlite3 --gzip
     python export_lean_db.py full.sqlite3 videos.sqlite3 --keep description --gzip
 
-By default this keeps exactly the columns index.html's COLUMNS/selectCols
-use: video_id, webpage_url, thumbnail_url, title, video_type, upload_date,
-duration_string, duration_seconds, view_count, like_count, comment_count.
+By default this keeps exactly the columns index.html's COLUMN_REGISTRY
+marks as default-visible: video_id, webpage_url, thumbnail_url, title,
+video_type, upload_date, duration_string, duration_seconds, view_count,
+like_count, comment_count, availability.
 Use --keep to add any extra columns back in (e.g. description, tags_json)
 if you customize the page to show them.
 """
@@ -42,6 +43,7 @@ DEFAULT_COLUMNS = [
     "view_count",
     "like_count",
     "comment_count",
+    "availability",
 ]
 
 

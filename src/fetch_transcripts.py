@@ -1,127 +1,148 @@
 #!/usr/bin/env python3
 
 """
-fetch_transcripts.py
+Fetch timestamped YouTube transcripts using caption URLs already stored
+inside the videos.raw_json column.
 
-Fetch timestamped YouTube transcripts/captions for every video
-already present in an existing SQLite database.
+Sources:
+    - Manual/uploaded subtitles: raw_json["subtitles"]
+    - Automatic captions:        raw_json["automatic_captions"]
 
-The database is expected to be created by:
-    youtube_channel_archiver.py
+The script does NOT call yt-dlp to re-fetch video metadata.
 
-Requirements:
-    pip install yt-dlp
+It:
+    1. Reads videos from the existing SQLite database.
+    2. Parses raw_json.
+    3. Finds manual and/or automatic caption tracks.
+    4. Selects the requested language(s).
+    5. Downloads the caption file directly from its stored URL.
+    6. Parses timestamps.
+    7. Stores timestamped transcript segments in SQLite.
+    8. Adds a direct YouTube timestamp URL to every segment.
 
-Usage:
+Supported caption formats:
+    - WebVTT
+    - SRT
+    - JSON3
+    - TTML
+    - SRV3
 
-    python fetch_transcripts.py mychannel.sqlite3
+Example:
 
-    # Prefer English
-    python fetch_transcripts.py mychannel.sqlite3 --language en
+    python fetch_transcripts.py archive.db --language en
 
-    # Save every available language
-    python fetch_transcripts.py mychannel.sqlite3 --all-languages
+Prefer manual subtitles, falling back to automatic captions:
 
-    # Use YouTube cookies
-    python fetch_transcripts.py mychannel.sqlite3 --cookies cookies.txt
+    python fetch_transcripts.py archive.db --language en
 
-    # Re-fetch transcripts that already exist
-    python fetch_transcripts.py mychannel.sqlite3 --force
+Fetch every available language and both manual + automatic tracks:
 
-The transcripts table stores:
+    python fetch_transcripts.py archive.db --all-languages
 
-    video_id
-    language
-    source
-    transcript_json
-    plain_text
-    fetched_at
+Force replacement of transcripts already stored:
 
-transcript_json contains timestamped segments:
-
-[
-    {
-        "start": 83.4,
-        "end": 87.8,
-        "text": "Hello everyone..."
-    },
-    ...
-]
+    python fetch_transcripts.py archive.db --language en --force
 """
 
+from __future__ import annotations
+
 import argparse
-import html
 import json
-import logging
 import re
 import sqlite3
 import sys
 import time
-from datetime import datetime, timezone
-from typing import Any
+import urllib.error
+import urllib.request
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass
+from typing import Any, Iterable
 
-try:
-    import yt_dlp
-except ImportError:
-    print(
-        "This script requires yt-dlp. Install it with:\n    pip install yt-dlp",
-        file=sys.stderr,
-    )
-    sys.exit(1)
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+DEFAULT_TIMEOUT = 30
+
+# Preferred caption formats.
+#
+# VTT is generally the easiest format to parse while preserving timestamps.
+# JSON3 also contains explicit timing information.
+FORMAT_PREFERENCE = {
+    "vtt": 0,
+    "srt": 1,
+    "json3": 2,
+    "ttml": 3,
+    "srv3": 4,
+    "srv2": 5,
+    "srv1": 6,
+}
 
 
 # ---------------------------------------------------------------------------
-# Logging
+# Data model
 # ---------------------------------------------------------------------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S",
-)
 
-log = logging.getLogger("transcripts")
+@dataclass
+class Segment:
+    start: float
+    end: float | None
+    text: str
+
+    def to_dict(self, video_id: str) -> dict[str, Any]:
+        start_seconds = max(0, int(self.start))
+
+        return {
+            "start": self.start,
+            "end": self.end,
+            "text": self.text,
+            "youtube_url": (
+                f"https://www.youtube.com/watch?v={video_id}&t={start_seconds}s"
+            ),
+        }
 
 
 # ---------------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------------
 
-TRANSCRIPT_SCHEMA = """
+TRANSCRIPTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS transcripts (
-    video_id         TEXT NOT NULL,
-    language         TEXT NOT NULL,
-    source           TEXT NOT NULL,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-    -- JSON array containing timestamped transcript segments.
-    transcript_json  TEXT NOT NULL,
+    video_id TEXT NOT NULL,
 
-    -- Same transcript without timestamps, useful for search/LLM processing.
-    plain_text       TEXT NOT NULL,
+    language TEXT NOT NULL,
 
-    fetched_at       TEXT NOT NULL,
+    source TEXT NOT NULL,
 
-    PRIMARY KEY (video_id, language, source),
+    transcript_json TEXT NOT NULL,
 
-    FOREIGN KEY (video_id)
-        REFERENCES videos(video_id)
+    plain_text TEXT NOT NULL,
+
+    fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(video_id, language, source)
 );
 
 CREATE INDEX IF NOT EXISTS idx_transcripts_video_id
-ON transcripts(video_id);
+    ON transcripts(video_id);
 
 CREATE INDEX IF NOT EXISTS idx_transcripts_language
-ON transcripts(language);
+    ON transcripts(language);
+
+CREATE INDEX IF NOT EXISTS idx_transcripts_source
+    ON transcripts(source);
 """
 
 
 def open_db(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
 
-    conn.execute("PRAGMA journal_mode=WAL;")
-
-    conn.executescript(TRANSCRIPT_SCHEMA)
-    conn.commit()
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.executescript(TRANSCRIPTS_SCHEMA)
 
     return conn
 
@@ -129,15 +150,19 @@ def open_db(path: str) -> sqlite3.Connection:
 def transcript_exists(
     conn: sqlite3.Connection,
     video_id: str,
+    language: str,
+    source: str,
 ) -> bool:
     row = conn.execute(
         """
         SELECT 1
         FROM transcripts
         WHERE video_id = ?
+          AND language = ?
+          AND source = ?
         LIMIT 1
         """,
-        (video_id,),
+        (video_id, language, source),
     ).fetchone()
 
     return row is not None
@@ -148,15 +173,14 @@ def save_transcript(
     video_id: str,
     language: str,
     source: str,
-    segments: list[dict[str, Any]],
+    segments: list[Segment],
 ) -> None:
+    transcript = [segment.to_dict(video_id) for segment in segments]
 
-    plain_text = "\n".join(
-        segment["text"] for segment in segments if segment.get("text")
-    )
+    plain_text = "\n".join(segment.text for segment in segments if segment.text.strip())
 
     transcript_json = json.dumps(
-        segments,
+        transcript,
         ensure_ascii=False,
     )
 
@@ -167,16 +191,15 @@ def save_transcript(
             language,
             source,
             transcript_json,
-            plain_text,
-            fetched_at
+            plain_text
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?)
 
         ON CONFLICT(video_id, language, source)
         DO UPDATE SET
             transcript_json = excluded.transcript_json,
             plain_text = excluded.plain_text,
-            fetched_at = excluded.fetched_at
+            fetched_at = CURRENT_TIMESTAMP
         """,
         (
             video_id,
@@ -184,7 +207,6 @@ def save_transcript(
             source,
             transcript_json,
             plain_text,
-            datetime.now(timezone.utc).isoformat(),
         ),
     )
 
@@ -192,379 +214,72 @@ def save_transcript(
 
 
 # ---------------------------------------------------------------------------
-# Time parsing
+# JSON / raw metadata helpers
 # ---------------------------------------------------------------------------
 
 
-def parse_timestamp(value: str) -> float | None:
-    """
-    Convert:
-
-        00:01:23.400
-        01:23.400
-        83.400
-
-    into seconds.
-    """
-
-    value = value.strip()
-
-    # Already numeric.
-    try:
-        return float(value)
-    except ValueError:
-        pass
-
-    parts = value.split(":")
+def load_raw_info(raw_json: str | None) -> dict[str, Any]:
+    if not raw_json:
+        return {}
 
     try:
-        if len(parts) == 3:
-            hours = float(parts[0])
-            minutes = float(parts[1])
-            seconds = float(parts[2])
+        value = json.loads(raw_json)
+    except (json.JSONDecodeError, TypeError):
+        return {}
 
-            return hours * 3600 + minutes * 60 + seconds
+    if not isinstance(value, dict):
+        return {}
 
-        if len(parts) == 2:
-            minutes = float(parts[0])
-            seconds = float(parts[1])
-
-            return minutes * 60 + seconds
-
-    except ValueError:
-        return None
-
-    return None
+    return value
 
 
-# ---------------------------------------------------------------------------
-# WebVTT parser
-# ---------------------------------------------------------------------------
-
-
-def parse_vtt(text: str) -> list[dict[str, Any]]:
+def get_caption_tracks(
+    info: dict[str, Any],
+    source: str,
+) -> dict[str, list[dict[str, Any]]]:
     """
-    Parse WebVTT into:
+    Return:
 
-        [
-            {
-                "start": 83.4,
-                "end": 87.8,
-                "text": "Hello everyone..."
-            }
+        {
+            "en": [
+                {"url": "...", "ext": "vtt", ...},
+                {"url": "...", "ext": "json3", ...},
+            ],
+            ...
+        }
+
+    source is either:
+        "manual"
+        "automatic"
+    """
+
+    if source == "manual":
+        tracks = info.get("subtitles") or {}
+    elif source == "automatic":
+        tracks = info.get("automatic_captions") or {}
+    else:
+        raise ValueError(f"Unknown source: {source}")
+
+    if not isinstance(tracks, dict):
+        return {}
+
+    result: dict[str, list[dict[str, Any]]] = {}
+
+    for language, formats in tracks.items():
+        if not isinstance(language, str):
+            continue
+
+        if not isinstance(formats, list):
+            continue
+
+        valid_formats = [
+            fmt for fmt in formats if isinstance(fmt, dict) and fmt.get("url")
         ]
-    """
 
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
+        if valid_formats:
+            result[language] = valid_formats
 
-    blocks = re.split(r"\n\s*\n", text)
-
-    segments = []
-
-    for block in blocks:
-        lines = [line.strip() for line in block.splitlines() if line.strip()]
-
-        if not lines:
-            continue
-
-        # Ignore WEBVTT header.
-        if lines[0].startswith("WEBVTT"):
-            lines = lines[1:]
-
-        # Ignore NOTE / STYLE / REGION blocks.
-        if lines and lines[0].startswith(("NOTE", "STYLE", "REGION")):
-            continue
-
-        timestamp_index = None
-
-        for i, line in enumerate(lines):
-            if "-->" in line:
-                timestamp_index = i
-                break
-
-        if timestamp_index is None:
-            continue
-
-        timestamp_line = lines[timestamp_index]
-
-        match = re.match(
-            r"(.+?)\s+-->\s+(.+?)(?:\s+.*)?$",
-            timestamp_line,
-        )
-
-        if not match:
-            continue
-
-        start = parse_timestamp(match.group(1))
-        end = parse_timestamp(match.group(2))
-
-        if start is None:
-            continue
-
-        if end is None:
-            end = start
-
-        text_lines = lines[timestamp_index + 1 :]
-
-        if not text_lines:
-            continue
-
-        caption = " ".join(text_lines)
-
-        # Remove WebVTT formatting tags.
-        caption = re.sub(
-            r"<[^>]+>",
-            "",
-            caption,
-        )
-
-        caption = html.unescape(caption)
-
-        caption = re.sub(
-            r"\s+",
-            " ",
-            caption,
-        ).strip()
-
-        if not caption:
-            continue
-
-        # Avoid duplicate adjacent captions.
-        if (
-            segments
-            and segments[-1]["start"] == start
-            and segments[-1]["text"] == caption
-        ):
-            continue
-
-        segments.append(
-            {
-                "start": round(start, 3),
-                "end": round(end, 3),
-                "text": caption,
-            }
-        )
-
-    return segments
-
-
-# ---------------------------------------------------------------------------
-# JSON3 parser
-# ---------------------------------------------------------------------------
-
-
-def parse_json3(text: str) -> list[dict[str, Any]]:
-    """
-    Parse YouTube JSON3 subtitle format.
-    """
-
-    data = json.loads(text)
-
-    segments = []
-
-    for event in data.get("events", []):
-        if "tStartMs" not in event:
-            continue
-
-        start = float(event["tStartMs"]) / 1000
-
-        duration = float(event.get("dDurationMs", 0)) / 1000
-
-        end = start + duration
-
-        pieces = []
-
-        for seg in event.get("segs", []):
-            value = seg.get("utf8")
-
-            if value:
-                pieces.append(value)
-
-        caption = "".join(pieces).strip()
-
-        if not caption:
-            continue
-
-        caption = html.unescape(caption)
-
-        segments.append(
-            {
-                "start": round(start, 3),
-                "end": round(end, 3),
-                "text": caption,
-            }
-        )
-
-    return segments
-
-
-# ---------------------------------------------------------------------------
-# TTML parser
-# ---------------------------------------------------------------------------
-
-
-def parse_ttml(text: str) -> list[dict[str, Any]]:
-    """
-    Basic TTML parser.
-
-    Handles common TTML subtitle timestamps.
-    """
-
-    segments = []
-
-    # Match <p begin="..." end="...">text</p>
-    pattern = re.compile(
-        r"<p\b([^>]*)>(.*?)</p>",
-        re.IGNORECASE | re.DOTALL,
-    )
-
-    for match in pattern.finditer(text):
-        attributes = match.group(1)
-        caption = match.group(2)
-
-        begin_match = re.search(
-            r'\bbegin=["\']([^"\']+)',
-            attributes,
-            re.IGNORECASE,
-        )
-
-        end_match = re.search(
-            r'\bend=["\']([^"\']+)',
-            attributes,
-            re.IGNORECASE,
-        )
-
-        if not begin_match:
-            continue
-
-        start = parse_timestamp(begin_match.group(1))
-
-        end = parse_timestamp(end_match.group(1)) if end_match else start
-
-        if start is None:
-            continue
-
-        caption = re.sub(
-            r"<[^>]+>",
-            "",
-            caption,
-        )
-
-        caption = html.unescape(caption)
-
-        caption = re.sub(
-            r"\s+",
-            " ",
-            caption,
-        ).strip()
-
-        if not caption:
-            continue
-
-        segments.append(
-            {
-                "start": round(start, 3),
-                "end": round(end or start, 3),
-                "text": caption,
-            }
-        )
-
-    return segments
-
-
-# ---------------------------------------------------------------------------
-# Subtitle format handling
-# ---------------------------------------------------------------------------
-
-
-def choose_format(
-    formats: list[dict[str, Any]],
-) -> dict[str, Any] | None:
-
-    # VTT is easiest to parse while retaining timestamps.
-    preferred_extensions = [
-        "vtt",
-        "json3",
-        "ttml",
-        "srv3",
-    ]
-
-    for extension in preferred_extensions:
-        for fmt in formats:
-            if fmt.get("ext") == extension:
-                return fmt
-
-    if formats:
-        return formats[0]
-
-    return None
-
-
-def download_and_parse_subtitle(
-    fmt: dict[str, Any],
-    ydl: yt_dlp.YoutubeDL,
-) -> list[dict[str, Any]]:
-
-    url = fmt.get("url")
-
-    if not url:
-        raise RuntimeError("Subtitle format has no URL")
-
-    response = ydl.urlopen(url)
-
-    raw = response.read()
-
-    text = raw.decode(
-        "utf-8",
-        errors="replace",
-    )
-
-    extension = (fmt.get("ext") or "").lower()
-
-    if extension == "vtt":
-        return parse_vtt(text)
-
-    if extension == "json3":
-        return parse_json3(text)
-
-    if extension == "ttml":
-        return parse_ttml(text)
-
-    # Some YouTube subtitle formats are XML-like.
-    if extension == "srv3":
-        return parse_ttml(text)
-
-    # Try VTT as a fallback.
-    return parse_vtt(text)
-
-
-# ---------------------------------------------------------------------------
-# Video metadata
-# ---------------------------------------------------------------------------
-
-
-def fetch_video_info(
-    video_id: str,
-    cookies: str | None,
-) -> dict[str, Any]:
-
-    url = "https://www.youtube.com/watch?v=" + video_id
-
-    ydl_opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-        "ignoreerrors": False,
-    }
-
-    if cookies:
-        ydl_opts["cookiefile"] = cookies
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        return ydl.extract_info(
-            url,
-            download=False,
-        )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -574,233 +289,834 @@ def fetch_video_info(
 
 def language_matches(
     language: str,
-    preferred: str | None,
+    requested: str,
 ) -> bool:
+    """
+    Match things such as:
 
-    if not preferred:
+        en
+        en-US
+        en-GB
+        en-orig
+
+    when the requested language is:
+
+        en
+    """
+
+    language = language.lower()
+    requested = requested.lower()
+
+    if language == requested:
         return True
 
+    return language.startswith(requested + "-") or language.startswith(requested + "_")
+
+
+def choose_language(
+    available: Iterable[str],
+    requested: str | None,
+    video_language: str | None,
+) -> str | None:
+    available = list(available)
+
+    if not available:
+        return None
+
+    # Explicit language request.
+    if requested:
+        exact = [lang for lang in available if lang.lower() == requested.lower()]
+
+        if exact:
+            return exact[0]
+
+        compatible = [lang for lang in available if language_matches(lang, requested)]
+
+        if compatible:
+            return compatible[0]
+
+        return None
+
+    # Otherwise prefer the video's declared language.
+    if video_language:
+        exact = [lang for lang in available if lang.lower() == video_language.lower()]
+
+        if exact:
+            return exact[0]
+
+        compatible = [
+            lang for lang in available if language_matches(lang, video_language)
+        ]
+
+        if compatible:
+            return compatible[0]
+
+    # Then prefer English if it exists.
+    english = [lang for lang in available if language_matches(lang, "en")]
+
+    if english:
+        return english[0]
+
+    # Finally use the first available language.
+    return available[0]
+
+
+# ---------------------------------------------------------------------------
+# Caption format selection
+# ---------------------------------------------------------------------------
+
+
+def format_rank(fmt: dict[str, Any]) -> tuple[int, str]:
+    ext = str(fmt.get("ext") or "").lower()
+
     return (
-        language == preferred
-        or language.startswith(preferred + "-")
-        or language.startswith(preferred + "_")
+        FORMAT_PREFERENCE.get(ext, 100),
+        ext,
     )
 
 
-def find_subtitles(
-    info: dict[str, Any],
-    preferred_language: str | None,
-    all_languages: bool,
-) -> list[dict[str, Any]]:
+def choose_caption_format(
+    formats: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    usable = [fmt for fmt in formats if isinstance(fmt, dict) and fmt.get("url")]
 
-    manual = info.get("subtitles") or {}
-    automatic = info.get("automatic_captions") or {}
+    if not usable:
+        return None
 
-    candidates = []
+    usable.sort(key=format_rank)
 
-    # ---------------------------------------------------------------
-    # Manual captions first.
-    # ---------------------------------------------------------------
-
-    for language, formats in manual.items():
-        if not language_matches(
-            language,
-            preferred_language,
-        ):
-            continue
-
-        candidates.append(
-            {
-                "language": language,
-                "source": "manual",
-                "formats": formats,
-            }
-        )
-
-    # ---------------------------------------------------------------
-    # Automatic captions second.
-    # ---------------------------------------------------------------
-
-    for language, formats in automatic.items():
-        if not language_matches(
-            language,
-            preferred_language,
-        ):
-            continue
-
-        candidates.append(
-            {
-                "language": language,
-                "source": "automatic",
-                "formats": formats,
-            }
-        )
-
-    if all_languages:
-        return candidates
-
-    # Without --all-languages:
-    #
-    # 1. Prefer manual subtitles.
-    # 2. Otherwise use automatic subtitles.
-    #
-    # If a language was specified, this will naturally select
-    # that language.
-
-    manual_candidates = [c for c in candidates if c["source"] == "manual"]
-
-    if manual_candidates:
-        return manual_candidates[:1]
-
-    automatic_candidates = [c for c in candidates if c["source"] == "automatic"]
-
-    return automatic_candidates[:1]
+    return usable[0]
 
 
 # ---------------------------------------------------------------------------
-# Main
+# HTTP download
 # ---------------------------------------------------------------------------
 
 
-def fetch_transcripts(
-    db_path: str,
-    cookies: str | None,
-    sleep_seconds: float,
-    preferred_language: str | None,
-    all_languages: bool,
-    force: bool,
-) -> None:
+def download_caption(
+    caption_format: dict[str, Any],
+    timeout: int = DEFAULT_TIMEOUT,
+) -> tuple[bytes, str]:
+    url = caption_format.get("url")
 
-    conn = open_db(db_path)
+    if not url:
+        raise RuntimeError("Caption format has no URL")
 
-    videos = conn.execute(
-        """
-        SELECT
-            video_id,
-            title,
-            webpage_url
-        FROM videos
-        ORDER BY upload_date
-        """
-    ).fetchall()
+    headers = caption_format.get("http_headers") or {}
 
-    log.info(
-        "Found %d video(s) in database",
-        len(videos),
-    )
+    if not isinstance(headers, dict):
+        headers = {}
 
-    ydl_opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
+    # A normal User-Agent makes direct HTTP requests more reliable.
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 "
+            "(Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 "
+            "(KHTML, like Gecko) "
+            "Chrome/130.0 Safari/537.36"
+        ),
+        **headers,
     }
 
-    if cookies:
-        ydl_opts["cookiefile"] = cookies
+    request = urllib.request.Request(
+        str(url),
+        headers=headers,
+    )
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        for index, (
-            video_id,
-            title,
-            webpage_url,
-        ) in enumerate(videos, 1):
-            log.info(
-                "[%d/%d] %s",
-                index,
-                len(videos),
-                title or video_id,
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=timeout,
+        ) as response:
+            data = response.read()
+
+            content_type = response.headers.get(
+                "Content-Type",
+                "",
             )
 
-            if not force and transcript_exists(
-                conn,
-                video_id,
-            ):
-                log.info("  Transcript already exists; skipping")
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"HTTP {exc.code} downloading caption URL") from exc
+
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Network error downloading caption URL: {exc}") from exc
+
+    return data, content_type
+
+
+# ---------------------------------------------------------------------------
+# Text cleanup
+# ---------------------------------------------------------------------------
+
+HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def clean_caption_text(text: str) -> str:
+    text = text.replace("\r\n", "\n")
+    text = text.replace("\r", "\n")
+
+    # Remove common subtitle markup.
+    text = HTML_TAG_RE.sub("", text)
+
+    # Decode common entities through the standard library.
+    import html
+
+    text = html.unescape(text)
+
+    # Remove zero-width characters.
+    text = (
+        text.replace("\u200b", "")
+        .replace("\u200c", "")
+        .replace("\u200d", "")
+        .replace("\ufeff", "")
+    )
+
+    # Normalize whitespace while preserving intentional line breaks.
+    lines = []
+
+    for line in text.splitlines():
+        line = re.sub(r"[ \t]+", " ", line).strip()
+
+        if line:
+            lines.append(line)
+
+    return " ".join(lines).strip()
+
+
+# ---------------------------------------------------------------------------
+# Timestamp parsing
+# ---------------------------------------------------------------------------
+
+
+def parse_timestamp(value: str) -> float:
+    """
+    Parse subtitle timestamps.
+
+    Supports:
+
+        00:01:23.456
+        01:23.456
+        01:23,456
+        83.456
+    """
+
+    value = value.strip().replace(",", ".")
+
+    # Plain seconds.
+    if re.fullmatch(r"\d+(?:\.\d+)?", value):
+        return float(value)
+
+    parts = value.split(":")
+
+    if len(parts) == 3:
+        hours, minutes, seconds = parts
+
+        return float(hours) * 3600 + float(minutes) * 60 + float(seconds)
+
+    if len(parts) == 2:
+        minutes, seconds = parts
+
+        return float(minutes) * 60 + float(seconds)
+
+    raise ValueError(f"Unrecognized timestamp: {value!r}")
+
+
+# ---------------------------------------------------------------------------
+# WebVTT / SRT parser
+# ---------------------------------------------------------------------------
+
+TIMESTAMP_LINE_RE = re.compile(
+    r"^\s*"
+    r"(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{3})"
+    r"\s*-->\s*"
+    r"(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{3})"
+)
+
+
+def parse_vtt_or_srt(text: str) -> list[Segment]:
+    segments: list[Segment] = []
+
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+
+    i = 0
+
+    while i < len(lines):
+        line = lines[i].strip()
+
+        match = TIMESTAMP_LINE_RE.match(line)
+
+        # SRT sometimes has a numeric cue ID before the timestamp.
+        if not match and i + 1 < len(lines):
+            next_line = lines[i + 1].strip()
+            match = TIMESTAMP_LINE_RE.match(next_line)
+
+            if match:
+                i += 1
+                line = next_line
+
+        if not match:
+            i += 1
+            continue
+
+        try:
+            start = parse_timestamp(match.group(1))
+            end = parse_timestamp(match.group(2))
+        except ValueError:
+            i += 1
+            continue
+
+        i += 1
+
+        text_lines = []
+
+        while i < len(lines):
+            current = lines[i]
+
+            if not current.strip():
+                break
+
+            # Stop if the next cue starts immediately.
+            if TIMESTAMP_LINE_RE.match(current.strip()):
+                i -= 1
+                break
+
+            text_lines.append(current)
+            i += 1
+
+        text_value = clean_caption_text("\n".join(text_lines))
+
+        if text_value:
+            segments.append(
+                Segment(
+                    start=start,
+                    end=end,
+                    text=text_value,
+                )
+            )
+
+        i += 1
+
+    return segments
+
+
+# ---------------------------------------------------------------------------
+# JSON3 parser
+# ---------------------------------------------------------------------------
+
+
+def parse_json3(data: bytes) -> list[Segment]:
+    payload = json.loads(data.decode("utf-8-sig", errors="replace"))
+
+    events = payload.get("events") or []
+
+    segments: list[Segment] = []
+
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+
+        start_ms = event.get("t")
+
+        if start_ms is None:
+            continue
+
+        try:
+            start = float(start_ms) / 1000.0
+        except (TypeError, ValueError):
+            continue
+
+        duration_ms = event.get("d")
+
+        if duration_ms is not None:
+            try:
+                end = (float(start_ms) + float(duration_ms)) / 1000.0
+            except (TypeError, ValueError):
+                end = None
+        else:
+            end = None
+
+        parts = []
+
+        for seg in event.get("segs") or []:
+            if not isinstance(seg, dict):
+                continue
+
+            value = seg.get("utf8")
+
+            if value is not None:
+                parts.append(str(value))
+
+        text_value = clean_caption_text("".join(parts))
+
+        if not text_value:
+            continue
+
+        segments.append(
+            Segment(
+                start=start,
+                end=end,
+                text=text_value,
+            )
+        )
+
+    return segments
+
+
+# ---------------------------------------------------------------------------
+# XML subtitle parser
+# ---------------------------------------------------------------------------
+
+
+def local_name(tag: str) -> str:
+    """
+    Convert:
+
+        {namespace}p
+
+    into:
+
+        p
+    """
+
+    if "}" in tag:
+        return tag.rsplit("}", 1)[1]
+
+    return tag
+
+
+def element_text(element: ET.Element) -> str:
+    return "".join(element.itertext())
+
+
+def parse_xml_captions(
+    data: bytes,
+    source_format: str,
+) -> list[Segment]:
+    root = ET.fromstring(data)
+
+    segments: list[Segment] = []
+
+    for element in root.iter():
+        if local_name(element.tag) != "p":
+            continue
+
+        # SRV3 typically uses:
+        #
+        #   t = start milliseconds
+        #   d = duration milliseconds
+        #
+        if source_format in {"srv3", "srv2", "srv1"}:
+            t = element.attrib.get("t")
+            d = element.attrib.get("d")
+
+            if t is None:
                 continue
 
             try:
-                info = fetch_video_info(
-                    video_id,
-                    cookies,
+                start = float(t) / 1000.0
+            except ValueError:
+                continue
+
+            if d is not None:
+                try:
+                    end = (float(t) + float(d)) / 1000.0
+                except ValueError:
+                    end = None
+            else:
+                end = None
+
+        # TTML normally uses begin/end/dur.
+        else:
+            begin = element.attrib.get("begin")
+            end_value = element.attrib.get("end")
+            duration = element.attrib.get("dur")
+
+            if begin is None:
+                continue
+
+            try:
+                start = parse_ttml_time(begin)
+            except ValueError:
+                continue
+
+            end = None
+
+            if end_value:
+                try:
+                    end = parse_ttml_time(end_value)
+                except ValueError:
+                    end = None
+            elif duration:
+                try:
+                    end = start + parse_ttml_time(duration)
+                except ValueError:
+                    end = None
+
+        text_value = clean_caption_text(element_text(element))
+
+        if not text_value:
+            continue
+
+        segments.append(
+            Segment(
+                start=start,
+                end=end,
+                text=text_value,
+            )
+        )
+
+    return segments
+
+
+def parse_ttml_time(value: str) -> float:
+    """
+    Parse common TTML time expressions.
+
+    Examples:
+
+        00:00:03.500
+        3.5s
+        3500ms
+        75f
+    """
+
+    value = value.strip()
+
+    if value.endswith("ms"):
+        return float(value[:-2]) / 1000.0
+
+    if value.endswith("s"):
+        return float(value[:-1])
+
+    # Frames. YouTube's subtitle feeds commonly use 30fps
+    # when frame-based timing is encountered.
+    if value.endswith("f"):
+        return float(value[:-1]) / 30.0
+
+    return parse_timestamp(value)
+
+
+# ---------------------------------------------------------------------------
+# Caption parsing dispatcher
+# ---------------------------------------------------------------------------
+
+
+def parse_caption(
+    data: bytes,
+    extension: str,
+) -> list[Segment]:
+    extension = extension.lower().lstrip(".")
+
+    if extension in {"vtt", "webvtt"}:
+        text = data.decode(
+            "utf-8-sig",
+            errors="replace",
+        )
+        return parse_vtt_or_srt(text)
+
+    if extension == "srt":
+        text = data.decode(
+            "utf-8-sig",
+            errors="replace",
+        )
+        return parse_vtt_or_srt(text)
+
+    if extension == "json3":
+        return parse_json3(data)
+
+    if extension in {
+        "ttml",
+        "srv3",
+        "srv2",
+        "srv1",
+        "xml",
+    }:
+        return parse_xml_captions(
+            data,
+            extension,
+        )
+
+    # Some stored formats may have an unexpected/missing extension.
+    #
+    # Try VTT first because that is the most common YouTube subtitle
+    # representation.
+    try:
+        text = data.decode(
+            "utf-8-sig",
+            errors="replace",
+        )
+
+        segments = parse_vtt_or_srt(text)
+
+        if segments:
+            return segments
+    except Exception:
+        pass
+
+    # Then try JSON3.
+    try:
+        return parse_json3(data)
+    except Exception:
+        pass
+
+    raise RuntimeError(f"Unsupported or unrecognized caption format: {extension}")
+
+
+# ---------------------------------------------------------------------------
+# Transcript processing
+# ---------------------------------------------------------------------------
+
+
+def fetch_one_track(
+    video_id: str,
+    language: str,
+    source: str,
+    formats: list[dict[str, Any]],
+    timeout: int,
+) -> list[Segment]:
+    caption_format = choose_caption_format(formats)
+
+    if not caption_format:
+        raise RuntimeError(f"No usable caption format for {language}")
+
+    extension = str(caption_format.get("ext") or "vtt").lower()
+
+    url = caption_format.get("url")
+
+    print(f"      {source:9s} {language:12s} {extension:6s} {url[:100]}...")
+
+    data, _content_type = download_caption(
+        caption_format,
+        timeout=timeout,
+    )
+
+    segments = parse_caption(
+        data,
+        extension,
+    )
+
+    if not segments:
+        raise RuntimeError("Caption file contained no transcript segments")
+
+    return segments
+
+
+def process_video(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    language: str | None,
+    all_languages: bool,
+    force: bool,
+    timeout: int,
+) -> int:
+    video_id = row["video_id"]
+    title = row["title"] or video_id
+
+    info = load_raw_info(row["raw_json"])
+
+    if not info:
+        print(f"[SKIP] {video_id}: invalid or empty raw_json")
+        return 0
+
+    video_language = info.get("language")
+
+    manual = get_caption_tracks(
+        info,
+        "manual",
+    )
+
+    automatic = get_caption_tracks(
+        info,
+        "automatic",
+    )
+
+    if not manual and not automatic:
+        print(f"[NONE] {video_id}: no caption URLs in raw_json")
+        return 0
+
+    # ------------------------------------------------------------------
+    # Select tracks.
+    #
+    # Normal mode:
+    #     Prefer manual subtitles.
+    #     Fall back to automatic captions.
+    #
+    # --all-languages:
+    #     Fetch every available manual and automatic language.
+    # ------------------------------------------------------------------
+
+    selected: list[tuple[str, str, list[dict[str, Any]]]] = []
+
+    if all_languages:
+        for lang, formats in manual.items():
+            selected.append(("manual", lang, formats))
+
+        for lang, formats in automatic.items():
+            selected.append(("automatic", lang, formats))
+
+    else:
+        selected_language = choose_language(
+            list(manual.keys()) + list(automatic.keys()),
+            language,
+            video_language,
+        )
+
+        if not selected_language:
+            requested = language or "(automatic)"
+
+            print(f"[NONE] {video_id}: language {requested!r} not available")
+            return 0
+
+        # Prefer manual for the selected language.
+        manual_language = next(
+            (
+                lang
+                for lang in manual
+                if language_matches(
+                    lang,
+                    selected_language,
+                )
+            ),
+            None,
+        )
+
+        if manual_language:
+            selected.append(
+                (
+                    "manual",
+                    manual_language,
+                    manual[manual_language],
+                )
+            )
+
+        else:
+            automatic_language = next(
+                (
+                    lang
+                    for lang in automatic
+                    if language_matches(
+                        lang,
+                        selected_language,
+                    )
+                ),
+                None,
+            )
+
+            if automatic_language:
+                selected.append(
+                    (
+                        "automatic",
+                        automatic_language,
+                        automatic[automatic_language],
+                    )
                 )
 
-                if not info:
-                    log.warning("  No video information returned")
-                    continue
+    if not selected:
+        print(f"[NONE] {video_id}: no matching caption track")
+        return 0
 
-                candidates = find_subtitles(
-                    info,
-                    preferred_language,
-                    all_languages,
-                )
+    print(f"\n[{video_id}] {title}")
 
-                if not candidates:
-                    log.info("  No subtitles/captions available")
-                    continue
+    saved = 0
 
-                for candidate in candidates:
-                    language = candidate["language"]
+    for source, lang, formats in selected:
+        if not force and transcript_exists(
+            conn,
+            video_id,
+            lang,
+            source,
+        ):
+            print(f"      [EXISTS] {source}/{lang}")
+            continue
 
-                    source = candidate["source"]
+        try:
+            segments = fetch_one_track(
+                video_id=video_id,
+                language=lang,
+                source=source,
+                formats=formats,
+                timeout=timeout,
+            )
 
-                    formats = candidate["formats"]
+            save_transcript(
+                conn=conn,
+                video_id=video_id,
+                language=lang,
+                source=source,
+                segments=segments,
+            )
 
-                    fmt = choose_format(formats)
+            print(f"      [SAVED] {len(segments):,} segments")
 
-                    if not fmt:
-                        log.warning(
-                            "  No usable subtitle format for %s (%s)",
-                            language,
-                            source,
-                        )
-                        continue
+            saved += 1
 
-                    log.info(
-                        "  Fetching %s %s transcript",
-                        language,
-                        source,
-                    )
+        except Exception as exc:
+            print(f"      [ERROR] {source}/{lang}: {exc}")
 
-                    segments = download_and_parse_subtitle(
-                        fmt,
-                        ydl,
-                    )
+    return saved
 
-                    if not segments:
-                        log.warning("  Transcript was empty")
-                        continue
 
-                    save_transcript(
-                        conn,
-                        video_id,
-                        language,
-                        source,
-                        segments,
-                    )
+# ---------------------------------------------------------------------------
+# Main archive loop
+# ---------------------------------------------------------------------------
 
-                    total_characters = sum(len(segment["text"]) for segment in segments)
 
-                    log.info(
-                        "  Saved %d segments / %d characters",
-                        len(segments),
-                        total_characters,
-                    )
+def archive_transcripts(
+    db_path: str,
+    language: str | None,
+    all_languages: bool,
+    force: bool,
+    timeout: int,
+    delay: float,
+) -> None:
+    conn = open_db(db_path)
 
-                    if not all_languages:
-                        break
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                video_id,
+                title,
+                raw_json
+            FROM videos
+            WHERE raw_json IS NOT NULL
+              AND raw_json != ''
+            ORDER BY rowid
+            """
+        ).fetchall()
 
-            except Exception as exc:
-                log.error(
-                    "  Failed: %s",
-                    exc,
-                )
+        total = len(rows)
 
-            if sleep_seconds and index < len(videos):
-                time.sleep(sleep_seconds)
+        print(f"Found {total:,} videos with raw_json.")
 
-    conn.close()
+        total_saved = 0
 
-    log.info("Transcript fetching complete.")
+        for index, row in enumerate(rows, start=1):
+            video_id = row["video_id"]
+
+            print(f"\n{'=' * 80}")
+            print(f"[{index:,}/{total:,}] {video_id}")
+
+            saved = process_video(
+                conn=conn,
+                row=row,
+                language=language,
+                all_languages=all_languages,
+                force=force,
+                timeout=timeout,
+            )
+
+            total_saved += saved
+
+            if delay > 0 and index < total:
+                time.sleep(delay)
+
+        print(f"\nCompleted.")
+        print(f"Transcript records saved: {total_saved:,}")
+
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -808,71 +1124,103 @@ def fetch_transcripts(
 # ---------------------------------------------------------------------------
 
 
-def parse_args(argv=None):
-
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Fetch timestamped YouTube transcripts "
-            "for videos in an existing SQLite database."
+            "Fetch timestamped YouTube transcripts from "
+            "caption URLs already stored in videos.raw_json."
         )
     )
 
     parser.add_argument(
         "database",
-        help=("SQLite database created by youtube_channel_archiver.py"),
-    )
-
-    parser.add_argument(
-        "--cookies",
-        default=None,
-        help="Path to cookies.txt",
+        help="Path to the SQLite database created by youtube_channel_archiver.py",
     )
 
     parser.add_argument(
         "--language",
+        "-l",
         default=None,
         help=(
             "Preferred language, e.g. en, de, fr. "
-            "Without this option the first available "
-            "language is used."
+            "en also matches en-US/en-GB/etc. "
+            "Without this option, the video's declared language "
+            "is preferred, then English, then the first available language."
         ),
     )
 
     parser.add_argument(
         "--all-languages",
         action="store_true",
-        help=("Save every available subtitle language."),
+        help=(
+            "Fetch every available manual and automatic caption language "
+            "instead of selecting one language."
+        ),
     )
 
     parser.add_argument(
         "--force",
         action="store_true",
-        help=("Re-fetch transcripts even if one already exists."),
+        help="Replace existing transcript records.",
     )
 
     parser.add_argument(
-        "--sleep",
+        "--timeout",
+        type=int,
+        default=DEFAULT_TIMEOUT,
+        help=f"HTTP timeout in seconds (default: {DEFAULT_TIMEOUT}).",
+    )
+
+    parser.add_argument(
+        "--delay",
         type=float,
-        default=1.0,
-        help=("Seconds between videos (default: 1.0)"),
+        default=0.0,
+        help="Delay between videos in seconds.",
     )
 
-    return parser.parse_args(argv)
+    return parser
 
 
-def main():
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
 
-    args = parse_args()
+    if args.timeout <= 0:
+        parser.error("--timeout must be greater than zero")
 
-    fetch_transcripts(
-        db_path=args.database,
-        cookies=args.cookies,
-        sleep_seconds=args.sleep,
-        preferred_language=args.language,
-        all_languages=args.all_languages,
-        force=args.force,
-    )
+    if args.delay < 0:
+        parser.error("--delay cannot be negative")
+
+    try:
+        archive_transcripts(
+            db_path=args.database,
+            language=args.language,
+            all_languages=args.all_languages,
+            force=args.force,
+            timeout=args.timeout,
+            delay=args.delay,
+        )
+
+    except KeyboardInterrupt:
+        print("\nInterrupted.")
+        return 130
+
+    except sqlite3.Error as exc:
+        print(
+            f"Database error: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+
+    except Exception as exc:
+        print(
+            f"Fatal error: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

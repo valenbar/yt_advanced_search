@@ -141,6 +141,8 @@ def find_spikes(
                     "baseline": baseline,
                     "neighbors_used": len(neighbor_views),
                     "spike_percent": spike_percent,
+                    "before": before,
+                    "after": after,
                 }
             )
 
@@ -148,7 +150,7 @@ def find_spikes(
     return results
 
 
-def print_results(results: List[dict], top: Optional[int]) -> None:
+def print_results(results: List[dict], top: Optional[int], show_context: bool) -> None:
     if not results:
         print("No spikes found with the current settings.")
         return
@@ -168,6 +170,17 @@ def print_results(results: List[dict], top: Optional[int]) -> None:
         print(f"          {r['title']}")
         if r["webpage_url"]:
             print(f"          {r['webpage_url']}")
+
+        if show_context:
+            print()
+            for n in r["before"]:
+                views = n["view_count"] if n["view_count"] is not None else 0
+                print(f"    {views:>12,} views  {n['title']}")
+            print(f"  > {r['view_count']:>12,} views  {r['title']}")
+            for n in r["after"]:
+                views = n["view_count"] if n["view_count"] is not None else 0
+                print(f"    {views:>12,} views  {n['title']}")
+
         print()
 
 
@@ -269,6 +282,11 @@ def parse_args(argv=None) -> argparse.Namespace:
         default=None,
         help="Optional path to also write results as a CSV file",
     )
+    parser.add_argument(
+        "--no-context",
+        action="store_true",
+        help="Don't print the surrounding neighbor videos under each spike, just the summary line",
+    )
     return parser.parse_args(argv)
 
 
@@ -306,7 +324,7 @@ def main(argv=None) -> None:
     conn.close()
     all_results.sort(key=lambda x: x["spike_percent"], reverse=True)
 
-    print_results(all_results, args.top)
+    print_results(all_results, args.top, show_context=not args.no_context)
     if args.csv:
         write_csv(all_results[: args.top] if args.top else all_results, args.csv)
 

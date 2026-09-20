@@ -35,9 +35,10 @@ import logging
 import sqlite3
 import sys
 import time
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any
 
 try:
     import yt_dlp
@@ -133,12 +134,12 @@ def open_db(path: str) -> sqlite3.Connection:
     return conn
 
 
-def existing_video_ids(conn: sqlite3.Connection) -> Set[str]:
+def existing_video_ids(conn: sqlite3.Connection) -> set[str]:
     cur = conn.execute("SELECT video_id FROM videos")
     return {row[0] for row in cur.fetchall()}
 
 
-def best_thumbnail(info: Dict[str, Any]) -> Optional[str]:
+def best_thumbnail(info: dict[str, Any]) -> str | None:
     thumbs = info.get("thumbnails") or []
     if thumbs:
         # yt-dlp usually orders thumbnails smallest -> largest; take the last (largest)
@@ -146,7 +147,7 @@ def best_thumbnail(info: Dict[str, Any]) -> Optional[str]:
     return info.get("thumbnail")
 
 
-def classify_video_type(info: Dict[str, Any], source_tab: str) -> str:
+def classify_video_type(info: dict[str, Any], source_tab: str) -> str:
     if source_tab == "shorts":
         return "short"
     if info.get("was_live") or info.get("is_live") or source_tab == "streams":
@@ -154,7 +155,7 @@ def classify_video_type(info: Dict[str, Any], source_tab: str) -> str:
     return "video"
 
 
-def row_from_info(info: Dict[str, Any], source_tab: str) -> Dict[str, Any]:
+def row_from_info(info: dict[str, Any], source_tab: str) -> dict[str, Any]:
     duration = info.get("duration")
     subtitles = list((info.get("subtitles") or {}).keys())
     auto_captions = list((info.get("automatic_captions") or {}).keys())
@@ -211,10 +212,10 @@ def row_from_info(info: Dict[str, Any], source_tab: str) -> Dict[str, Any]:
     }
 
 
-def upsert_video(conn: sqlite3.Connection, row: Dict[str, Any]) -> None:
+def upsert_video(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
     columns = ", ".join(row.keys())
     placeholders = ", ".join("?" for _ in row)
-    updates = ", ".join(f"{k}=excluded.{k}" for k in row.keys() if k != "video_id")
+    updates = ", ".join(f"{k}=excluded.{k}" for k in row if k != "video_id")
     sql = (
         f"INSERT INTO videos ({columns}) VALUES ({placeholders}) "
         f"ON CONFLICT(video_id) DO UPDATE SET {updates}"
@@ -240,7 +241,7 @@ def normalize_channel_url(channel: str) -> str:
     """Accept a full URL, an @handle, or a bare channel name and turn it into
     a channel URL yt-dlp can work with."""
     channel = channel.strip()
-    if channel.startswith("http://") or channel.startswith("https://"):
+    if channel.startswith(("http://", "https://")):
         return channel.rstrip("/")
     if channel.startswith("@"):
         return f"https://www.youtube.com/{channel}"
@@ -258,8 +259,8 @@ def tab_url(base_channel_url: str, tab: str) -> str:
 
 
 def list_video_ids_for_tab(
-    base_channel_url: str, tab: str, cookies: Optional[str], max_videos: Optional[int]
-) -> List[Dict[str, str]]:
+    base_channel_url: str, tab: str, cookies: str | None, max_videos: int | None
+) -> list[dict[str, str]]:
     """Flat-extract the given channel tab to get video ids/urls quickly
     without downloading full metadata for each one yet."""
     url = tab_url(base_channel_url, tab)
@@ -275,9 +276,9 @@ def list_video_ids_for_tab(
     if max_videos:
         ydl_opts["playlistend"] = max_videos
 
-    entries: List[Dict[str, str]] = []
+    entries: list[dict[str, str]] = []
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        with yt_dlp.YoutubeDL(yt_dlp) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as exc:  # noqa: BLE001
         log.warning("Could not list tab '%s' (%s): %s", tab, url, exc)
@@ -310,7 +311,7 @@ def list_video_ids_for_tab(
     return entries
 
 
-def fetch_full_info(video_id: str, cookies: Optional[str]) -> Dict[str, Any]:
+def fetch_full_info(video_id: str, cookies: str | None) -> dict[str, Any]:
     url = f"https://www.youtube.com/watch?v={video_id}"
     ydl_opts = {
         "quiet": True,
@@ -333,9 +334,9 @@ def archive_channel(
     channel: str,
     db_path: str,
     tabs: Iterable[str],
-    cookies: Optional[str],
+    cookies: str | None,
     sleep_seconds: float,
-    max_videos: Optional[int],
+    max_videos: int | None,
     update_only: bool,
 ) -> None:
     base_url = normalize_channel_url(channel)
@@ -350,7 +351,7 @@ def archive_channel(
         )
 
     # Step 1: discover video ids across all requested tabs
-    discovered: Dict[
+    discovered: dict[
         str, str
     ] = {}  # video_id -> source_tab (first tab it was found on)
     for tab in tabs:
@@ -392,7 +393,7 @@ def archive_channel(
     log.info("Done. Database written to %s", db_path)
 
 
-def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Archive every video (including livestream VODs) from a YouTube channel into SQLite.",
     )
@@ -447,7 +448,7 @@ def default_db_name(channel: str) -> str:
     return f"{slug or 'channel'}.sqlite3"
 
 
-def main(argv: Optional[List[str]] = None) -> None:
+def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     db_path = args.db or default_db_name(args.channel)
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)

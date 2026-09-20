@@ -312,6 +312,7 @@ const COLUMN_REGISTRY = {
   upload_timestamp:{ label: "Uploaded (exact)", type: "datetime", sortable: true, defaultVisible: false },
   average_rating:  { label: "Rating",       type: "num",      sortable: true,  defaultVisible: false },
   source_tab:      { label: "Found via",    type: "text",     sortable: true,  defaultVisible: false },
+  like_view_ratio: { label: "Like/View",    type: "percent",  sortable: true,  defaultVisible: false },
 
   // Populated only after running the spike finder
   spike_percent:   { label: "Spike %",   type: "spike", sortable: true, defaultVisible: false, synthetic: true },
@@ -395,6 +396,9 @@ function loadDatabase(SQL, bytes) {
   });
 
   availableColumns = dbColumns.filter(c => COLUMN_REGISTRY[c]);
+  if (dbColumns.includes("view_count") && dbColumns.includes("like_count")) {
+    availableColumns.push("like_view_ratio"); // derived column, not an actual db column
+  }
   visibleColumns = loadVisibleColumnsPreference();
 
   const selectCols = ["video_id", "webpage_url", ...dbColumns].filter((v, i, a) => a.indexOf(v) === i);
@@ -410,6 +414,8 @@ function loadDatabase(SQL, bytes) {
     cols.forEach((c, i) => obj[c] = rowArr[i]);
     obj._uploadTime = uploadTimeMs(obj);
     obj._uploadDateStr = uploadDateStr(obj);
+    obj.like_view_ratio = (obj.like_count != null && obj.view_count > 0)
+      ? obj.like_count / obj.view_count : null;
     return obj;
   });
 
@@ -884,6 +890,12 @@ function frag_appendCell(tr, r, key) {
       td.className = "num";
       const v = r[key];
       td.textContent = v != null ? Number(v).toLocaleString(undefined, { maximumFractionDigits: 1 }) : "—";
+      break;
+    }
+    case "percent": {
+      td.className = "num";
+      const v = r[key];
+      td.textContent = v != null ? `${(v * 100).toFixed(2)}%` : "—";
       break;
     }
     case "spike": {

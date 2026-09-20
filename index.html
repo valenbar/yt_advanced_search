@@ -51,6 +51,7 @@
   }
   .menu-btn:hover{border-color:var(--accent)}
   .menu-btn.on{border-color:var(--accent); color:var(--accent)}
+  .menu-btn.filled{border-color:var(--accent); color:var(--accent)}
   .menu-wrap{position:relative}
   .menu-panel{
     display:none; position:absolute; top:calc(100% + 8px); left:0; z-index:20;
@@ -150,9 +151,43 @@
   <select id="typeFilter"><option value="">All types</option></select>
 
   <div class="menu-wrap">
+    <button class="menu-btn" id="filtersBtn">▤ Filters</button>
+    <div class="menu-panel" id="filtersPanel">
+      <h3>Filters</h3>
+      <div class="field-row">
+        <label for="f-datefrom">Uploaded from</label>
+        <input type="date" id="f-datefrom">
+      </div>
+      <div class="field-row">
+        <label for="f-dateto">Uploaded to</label>
+        <input type="date" id="f-dateto">
+      </div>
+      <div class="field-row">
+        <label for="f-durmin">Min length (min)</label>
+        <input type="number" id="f-durmin" min="0" step="1" placeholder="—">
+      </div>
+      <div class="field-row">
+        <label for="f-durmax">Max length (min)</label>
+        <input type="number" id="f-durmax" min="0" step="1" placeholder="—">
+      </div>
+      <div class="field-row">
+        <label for="f-minviews">Min views</label>
+        <input type="number" id="f-minviews" min="0" step="1" placeholder="—">
+      </div>
+      <button class="clear-btn" id="f-clear">Clear filters</button>
+    </div>
+  </div>
+
+  <div class="menu-wrap">
     <button class="menu-btn" id="spikeBtn">⚡ Spike finder</button>
     <div class="menu-panel" id="spikePanel">
       <h3>Find view spikes</h3>
+      <div class="field-row" style="display:block; margin-bottom:12px">
+        <span class="hint" style="display:block; line-height:1.4">
+          Runs only on videos currently matching the search box, type, and
+          Filters above — filter first, then find spikes within that set.
+        </span>
+      </div>
       <div class="field-row">
         <label for="sf-window">Window<span class="hint">videos before/after used as baseline</span></label>
         <input type="number" id="sf-window" value="6" min="1" max="50">
@@ -354,6 +389,7 @@ function loadDatabase(SQL, bytes) {
     const obj = {};
     cols.forEach((c, i) => obj[c] = rowArr[i]);
     obj._uploadTime = uploadTimeMs(obj);
+    obj._uploadDateStr = uploadDateStr(obj);
     return obj;
   });
 
@@ -376,6 +412,15 @@ function uploadTimeMs(row) {
     const s = String(d);
     return Date.UTC(+s.slice(0,4), +s.slice(4,6) - 1, +s.slice(6,8));
   }
+  return null;
+}
+
+// Always-present YYYYMMDD string for a row, derived from whichever date
+// field is available, used for simple/robust lexicographic date-range
+// comparisons (avoids timezone edge cases from comparing Date objects).
+function uploadDateStr(row) {
+  if (row.upload_date && String(row.upload_date).length === 8) return String(row.upload_date);
+  if (row.upload_timestamp) return new Date(row.upload_timestamp * 1000).toISOString().slice(0, 10).replace(/-/g, "");
   return null;
 }
 
@@ -471,8 +516,30 @@ function populateTypeFilter() {
   });
 }
 
-el("search").addEventListener("input", () => { page = 1; applyFiltersAndRender(); });
-el("typeFilter").addEventListener("change", () => { page = 1; applyFiltersAndRender(); });
+el("search").addEventListener("input", () => { clearSpikes(); page = 1; applyFiltersAndRender(); });
+el("typeFilter").addEventListener("change", () => { clearSpikes(); page = 1; applyFiltersAndRender(); });
+
+["f-datefrom", "f-dateto", "f-durmin", "f-durmax", "f-minviews"].forEach(id => {
+  el(id).addEventListener("input", () => {
+    clearSpikes();
+    updateFiltersBtnState();
+    page = 1;
+    applyFiltersAndRender();
+  });
+});
+
+el("f-clear").addEventListener("click", () => {
+  ["f-datefrom", "f-dateto", "f-durmin", "f-durmax", "f-minviews"].forEach(id => { el(id).value = ""; });
+  clearSpikes();
+  updateFiltersBtnState();
+  page = 1;
+  applyFiltersAndRender();
+});
+
+function updateFiltersBtnState() {
+  const active = ["f-datefrom", "f-dateto", "f-durmin", "f-durmax", "f-minviews"].some(id => el(id).value !== "");
+  el("filtersBtn").classList.toggle("filled", active);
+}
 el("pageSize").addEventListener("change", (e) => { pageSize = parseInt(e.target.value, 10); page = 1; render(); });
 el("prevBtn").addEventListener("click", () => { if (page > 1) { page--; render(); } });
 el("nextBtn").addEventListener("click", () => {
@@ -493,6 +560,7 @@ function setupMenu(btnId, panelId) {
 }
 setupMenu("spikeBtn", "spikePanel");
 setupMenu("colsBtn", "colsPanel");
+setupMenu("filtersBtn", "filtersPanel");
 document.addEventListener("click", () => {
   document.querySelectorAll(".menu-panel").forEach(p => p.classList.remove("open"));
   document.querySelectorAll(".menu-btn").forEach(b => b.classList.remove("on"));
@@ -509,15 +577,18 @@ function median(nums) {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
-function computeSpikes({ window: win, minNeighbors, minViews, minAgeDays, splitByType }) {
+function computeSpikes(sourceRows, { window: win, minNeighbors, minViews, minAgeDays, splitByType }) {
   const now = Date.now();
   const minAgeMs = minAgeDays * 86400000;
 
-  const groups = splitByType
-    ? Object.values(groupBy(allRows.filter(r => r._uploadTime != null), r => r.video_type || "unknown"))
-    : [allRows.filter(r => r._uploadTime != null)];
-
+  // Reset every row first — only `sourceRows` (the currently filtered set)
+  // will get fresh values below, so anything filtered out stays null.
   allRows.forEach(r => { r.spike_percent = null; r.spike_baseline = null; });
+
+  const eligible = sourceRows.filter(r => r._uploadTime != null);
+  const groups = splitByType
+    ? Object.values(groupBy(eligible, r => r.video_type || "unknown"))
+    : [eligible];
 
   groups.forEach(group => {
     const sorted = [...group].sort((a, b) => a._uploadTime - b._uploadTime);
@@ -544,6 +615,18 @@ function computeSpikes({ window: win, minNeighbors, minViews, minAgeDays, splitB
   if (!visibleColumns.includes("spike_baseline")) visibleColumns.push("spike_baseline");
 }
 
+function clearSpikes() {
+  if (!spikesComputed) return;
+  spikesComputed = false;
+  onlySpikes = false;
+  allRows.forEach(r => { r.spike_percent = null; r.spike_baseline = null; });
+  visibleColumns = visibleColumns.filter(c => c !== "spike_percent" && c !== "spike_baseline");
+  availableColumns = availableColumns.filter(c => c !== "spike_percent" && c !== "spike_baseline");
+  if (sortKey === "spike_percent") { sortKey = "upload_date"; sortDir = "desc"; }
+  buildColumnsMenu();
+  buildHeader();
+}
+
 function groupBy(arr, fn) {
   return arr.reduce((acc, item) => {
     const k = fn(item);
@@ -562,7 +645,7 @@ el("sf-run").addEventListener("click", () => {
   };
   spikeThreshold = parseFloat(el("sf-threshold").value) || 0;
   onlySpikes = el("sf-onlyspikes").checked;
-  computeSpikes(opts);
+  computeSpikes(getBaseFilteredRows(), opts);
   buildColumnsMenu();
   buildHeader();
   sortKey = "spike_percent"; sortDir = "desc"; page = 1;
@@ -570,29 +653,58 @@ el("sf-run").addEventListener("click", () => {
 });
 
 el("sf-clear").addEventListener("click", () => {
-  spikesComputed = false;
-  onlySpikes = false;
-  allRows.forEach(r => { r.spike_percent = null; r.spike_baseline = null; });
-  visibleColumns = visibleColumns.filter(c => c !== "spike_percent" && c !== "spike_baseline");
-  availableColumns = availableColumns.filter(c => c !== "spike_percent" && c !== "spike_baseline");
-  if (sortKey === "spike_percent") { sortKey = "upload_date"; sortDir = "desc"; }
-  buildColumnsMenu();
-  buildHeader();
+  clearSpikes();
+  page = 1;
+  applyFiltersAndRender();
+});
+
+// These two don't need a recompute — they just change which already-computed
+// rows count as a "spike", so update live.
+el("sf-onlyspikes").addEventListener("change", () => {
+  if (!spikesComputed) return;
+  onlySpikes = el("sf-onlyspikes").checked;
+  page = 1;
+  applyFiltersAndRender();
+});
+el("sf-threshold").addEventListener("input", () => {
+  if (!spikesComputed) return;
+  spikeThreshold = parseFloat(el("sf-threshold").value) || 0;
   page = 1;
   applyFiltersAndRender();
 });
 
 // ---- Filtering / sorting -------------------------------------------------
-function applyFiltersAndRender() {
+function getBaseFilteredRows() {
   const q = el("search").value.trim().toLowerCase();
   const type = el("typeFilter").value;
+  const dateFrom = el("f-datefrom").value.replace(/-/g, "");   // "" or "YYYYMMDD"
+  const dateTo = el("f-dateto").value.replace(/-/g, "");
+  const durMinSec = el("f-durmin").value !== "" ? parseFloat(el("f-durmin").value) * 60 : null;
+  const durMaxSec = el("f-durmax").value !== "" ? parseFloat(el("f-durmax").value) * 60 : null;
+  const minViews = el("f-minviews").value !== "" ? parseFloat(el("f-minviews").value) : null;
 
-  filteredRows = allRows.filter(r => {
+  return allRows.filter(r => {
     if (type && r.video_type !== type) return false;
     if (q && !(r.title || "").toLowerCase().includes(q)) return false;
-    if (spikesComputed && onlySpikes && !(r.spike_percent != null && r.spike_percent >= spikeThreshold)) return false;
+
+    if (dateFrom) { if (!r._uploadDateStr || r._uploadDateStr < dateFrom) return false; }
+    if (dateTo)   { if (!r._uploadDateStr || r._uploadDateStr > dateTo) return false; }
+
+    if (durMinSec != null) { if (r.duration_seconds == null || r.duration_seconds < durMinSec) return false; }
+    if (durMaxSec != null) { if (r.duration_seconds == null || r.duration_seconds > durMaxSec) return false; }
+
+    if (minViews != null) { if (r.view_count == null || r.view_count < minViews) return false; }
+
     return true;
   });
+}
+
+function applyFiltersAndRender() {
+  let rows = getBaseFilteredRows();
+  if (spikesComputed && onlySpikes) {
+    rows = rows.filter(r => r.spike_percent != null && r.spike_percent >= spikeThreshold);
+  }
+  filteredRows = rows;
 
   filteredRows.sort((a, b) => {
     let av = a[sortKey], bv = b[sortKey];

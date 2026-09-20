@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Video Archive</title>
+  <style>
+    :root {
+      --bg: #0e0f11;
+      --panel: #16181b;
+      --panel2: #1d2024;
+      --border: #2a2d32;
+      --text: #e8e8e6;
+      --muted: #8b8f96;
+      --accent: #5ec9a6;
+      --accent-dim: #2c463d;
+      --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box
+    }
+
+    html,
+    body {
+      height: 100%
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    header {
+      padding: 20px 24px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: baseline;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      margin: 0;
+      letter-spacing: .2px
+    }
+
+    header .stat {
+      color: var(--muted);
+      font-size: 13px;
+      font-family: var(--mono)
+    }
+
+    #status {
+      padding: 40px 24px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 13px
+    }
+
+    #status a {
+      color: var(--accent)
+    }
+
+    #picker {
+      margin-top: 14px;
+      padding: 14px;
+      border: 1px dashed var(--border);
+      border-radius: 6px;
+      display: inline-block;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+    }
+
+    .toolbar input[type=text] {
+      background: var(--panel2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 7px 10px;
+      border-radius: 5px;
+      font-size: 13px;
+      width: 260px;
+      font-family: var(--sans);
+    }
+
+    .toolbar select {
+      background: var(--panel2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 7px 10px;
+      border-radius: 5px;
+      font-size: 13px;
+      font-family: var(--sans);
+    }
+
+    .toolbar input::placeholder {
+      color: var(--muted)
+    }
+
+    .toolbar .spacer {
+      flex: 1
+    }
+
+    .toolbar .count {
+      color: var(--muted);
+      font-size: 12px;
+      font-family: var(--mono)
+    }
+
+    #tablewrap {
+      overflow: auto;
+      height: calc(100vh - 128px)
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 13px
+    }
+
+    thead th {
+      position: sticky;
+      top: 0;
+      background: var(--panel);
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      user-select: none;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 11.5px;
+      letter-spacing: .3px;
+      white-space: nowrap;
+    }
+
+    thead th:hover {
+      color: var(--text)
+    }
+
+    thead th.active {
+      color: var(--accent)
+    }
+
+    thead th .arrow {
+      opacity: .6;
+      margin-left: 3px;
+      font-size: 10px
+    }
+
+    tbody td {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+
+    tbody tr:hover {
+      background: var(--panel2)
+    }
+
+    td.thumb img {
+      width: 120px;
+      height: 68px;
+      object-fit: cover;
+      border-radius: 4px;
+      display: block;
+      background: var(--panel2);
+    }
+
+    td.title {
+      max-width: 420px
+    }
+
+    td.title a {
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 500
+    }
+
+    td.title a:hover {
+      color: var(--accent);
+      text-decoration: underline
+    }
+
+    td.num {
+      font-family: var(--mono);
+      text-align: right;
+      white-space: nowrap;
+      color: var(--text)
+    }
+
+    td.type {
+      white-space: nowrap
+    }
+
+    .badge {
+      font-size: 11px;
+      font-family: var(--mono);
+      padding: 2px 7px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      text-transform: lowercase;
+    }
+
+    .badge.video {
+      color: #7fb3ff;
+      border-color: #2c3f5c
+    }
+
+    .badge.short {
+      color: #ffb37f;
+      border-color: #5c452c
+    }
+
+    .badge.stream {
+      color: var(--accent);
+      border-color: var(--accent-dim)
+    }
+
+    td.date {
+      white-space: nowrap;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 12px
+    }
+
+    .pager {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 24px;
+      border-top: 1px solid var(--border);
+      background: var(--panel);
+      font-size: 13px;
+    }
+
+    .pager button {
+      background: var(--panel2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 12px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .pager button:disabled {
+      opacity: .35;
+      cursor: default
+    }
+
+    .pager button:hover:not(:disabled) {
+      border-color: var(--accent)
+    }
+
+    .pager .spacer {
+      flex: 1
+    }
+
+    .pager .info {
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 12px
+    }
+  </style>
+</head>
+
+<body>
+
+  <header>
+    <h1>Video Archive</h1>
+    <span class="stat" id="header-stat"></span>
+  </header>
+
+  <div id="status">Loading database…</div>
+
+  <div class="toolbar" id="toolbar" style="display:none">
+    <input type="text" id="search" placeholder="Search titles…">
+    <select id="typeFilter">
+      <option value="">All types</option>
+    </select>
+    <span class="spacer"></span>
+    <span class="count" id="count"></span>
+  </div>
+
+  <div id="tablewrap" style="display:none">
+    <table>
+      <thead>
+        <tr id="headRow"></tr>
+      </thead>
+      <tbody id="body"></tbody>
+    </table>
+  </div>
+
+  <div class="pager" id="pager" style="display:none">
+    <button id="prevBtn">&larr; Prev</button>
+    <span class="info" id="pageInfo"></span>
+    <button id="nextBtn">Next &rarr;</button>
+    <span class="spacer"></span>
+    <label class="info">Rows per page
+      <select id="pageSize">
+        <option>25</option>
+        <option selected>50</option>
+        <option>100</option>
+        <option>250</option>
+      </select>
+    </label>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.14.2/sql-wasm.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+  <script>
+    // ---- Configuration -------------------------------------------------------
+    // Name of the database file this page will try to load automatically,
+    // expected to sit next to this index.html in the same repo/folder.
+    // Can be a plain .sqlite3 file OR a gzip-compressed one (e.g. "videos.sqlite3.gz")
+    // — gzip is auto-detected from the file's contents, so either works with no
+    // other changes. Compressing is strongly recommended for large channels: it
+    // both shrinks the file GitHub has to store and speeds up the page load.
+    const DB_FILENAME = "videos.sqlite3.gz";
+
+    // Columns pulled from the `videos` table. Adjust if your schema differs.
+    const COLUMNS = [
+      {key: "thumbnail_url", label: "", sortable: false, type: "thumb"},
+      {key: "title", label: "Title", sortable: true, type: "title"},
+      {key: "video_type", label: "Type", sortable: true, type: "type"},
+      {key: "upload_date", label: "Uploaded", sortable: true, type: "date"},
+      {key: "duration_string", label: "Duration", sortable: true, type: "text", sortKey: "duration_seconds"},
+      {key: "view_count", label: "Views", sortable: true, type: "num"},
+      {key: "like_count", label: "Likes", sortable: true, type: "num"},
+      {key: "comment_count", label: "Comments", sortable: true, type: "num"},
+    ];
+
+    // ---- State -----------------------------------------------------------
+    let allRows = [];
+    let filteredRows = [];
+    let sortKey = "upload_date";
+    let sortDir = "desc";
+    let page = 1;
+    let pageSize = 50;
+
+    const el = id => document.getElementById(id);
+
+    // ---- Load the database -------------------------------------------------
+    async function init() {
+      const SQL = await initSqlJs({
+        locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.14.2/${file}`
+      });
+
+      try {
+        const resp = await fetch(DB_FILENAME);
+        if (!resp.ok) throw new Error(`${DB_FILENAME} not found (HTTP ${resp.status})`);
+        const buf = new Uint8Array(await resp.arrayBuffer());
+        loadDatabase(SQL, maybeDecompress(buf));
+      } catch (err) {
+        showFilePicker(SQL, err.message);
+      }
+    }
+
+    // Gzip files start with the two magic bytes 0x1f 0x8b. Auto-detect so the
+    // same code path handles a plain .sqlite3 file or a gzip-compressed one.
+    function maybeDecompress(bytes) {
+      if (bytes.length > 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
+        return pako.inflate(bytes);
+      }
+      return bytes;
+    }
+
+    function showFilePicker(SQL, reason) {
+      el("status").innerHTML = `
+    Could not auto-load <code>${DB_FILENAME}</code> (${escapeHtml(reason)}).<br><br>
+    Place your database file next to this page and name it
+    <code>${DB_FILENAME}</code> (plain <code>.sqlite3</code> or gzip-compressed,
+    either works), or pick one manually below:
+    <div id="picker"><input type="file" id="fileInput" accept=".sqlite,.sqlite3,.db,.gz"></div>
+  `;
+      el("fileInput").addEventListener("change", async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const buf = new Uint8Array(await file.arrayBuffer());
+        loadDatabase(SQL, maybeDecompress(buf));
+      });
+    }
+
+    function loadDatabase(SQL, bytes) {
+      const db = new SQL.Database(bytes);
+      const selectCols = [
+        "video_id", "webpage_url", "thumbnail_url", "title", "video_type",
+        "upload_date", "duration_string", "duration_seconds",
+        "view_count", "like_count", "comment_count",
+      ];
+
+      const res = db.exec(`SELECT ${selectCols.join(", ")} FROM videos`);
+      if (!res.length) {
+        el("status").textContent = "The database has a `videos` table but it's empty.";
+        return;
+      }
+
+      const columns = res[0].columns;
+      allRows = res[0].values.map(rowArr => {
+        const obj = {};
+        columns.forEach((c, i) => obj[c] = rowArr[i]);
+        return obj;
+      });
+
+      populateTypeFilter();
+      el("status").style.display = "none";
+      el("toolbar").style.display = "flex";
+      el("tablewrap").style.display = "block";
+      el("pager").style.display = "flex";
+      el("header-stat").textContent = `${allRows.length.toLocaleString()} videos`;
+
+      buildHeader();
+      applyFiltersAndRender();
+    }
+
+    // ---- UI: header / filters ----------------------------------------------
+    function buildHeader() {
+      const row = el("headRow");
+      row.innerHTML = "";
+      COLUMNS.forEach(col => {
+        const th = document.createElement("th");
+        th.textContent = col.label;
+        if (col.sortable) {
+          th.addEventListener("click", () => {
+            const key = col.sortKey || col.key;
+            if (sortKey === key) sortDir = sortDir === "asc" ? "desc" : "asc";
+            else {sortKey = key; sortDir = key === "title" ? "asc" : "desc";}
+            page = 1;
+            applyFiltersAndRender();
+          });
+        }
+        row.appendChild(th);
+      });
+      updateHeaderIndicators();
+    }
+
+    function updateHeaderIndicators() {
+      const ths = el("headRow").children;
+      COLUMNS.forEach((col, i) => {
+        const key = col.sortKey || col.key;
+        const th = ths[i];
+        th.classList.toggle("active", key === sortKey);
+        th.innerHTML = col.label + (key === sortKey
+          ? `<span class="arrow">${sortDir === "asc" ? "▲" : "▼"}</span>` : "");
+      });
+    }
+
+    function populateTypeFilter() {
+      const types = [...new Set(allRows.map(r => r.video_type).filter(Boolean))].sort();
+      const sel = el("typeFilter");
+      types.forEach(t => {
+        const opt = document.createElement("option");
+        opt.value = t; opt.textContent = t;
+        sel.appendChild(opt);
+      });
+    }
+
+    el("search").addEventListener("input", () => {page = 1; applyFiltersAndRender();});
+    el("typeFilter").addEventListener("change", () => {page = 1; applyFiltersAndRender();});
+    el("pageSize").addEventListener("change", (e) => {pageSize = parseInt(e.target.value, 10); page = 1; render();});
+    el("prevBtn").addEventListener("click", () => {if (page > 1) {page--; render();} });
+    el("nextBtn").addEventListener("click", () => {
+      if (page < Math.ceil(filteredRows.length / pageSize)) {page++; render();}
+    });
+
+    // ---- Filtering / sorting -------------------------------------------------
+    function applyFiltersAndRender() {
+      const q = el("search").value.trim().toLowerCase();
+      const type = el("typeFilter").value;
+
+      filteredRows = allRows.filter(r => {
+        if (type && r.video_type !== type) return false;
+        if (q && !(r.title || "").toLowerCase().includes(q)) return false;
+        return true;
+      });
+
+      filteredRows.sort((a, b) => {
+        let av = a[sortKey], bv = b[sortKey];
+        if (av == null) av = sortDir === "asc" ? Infinity : -Infinity;
+        if (bv == null) bv = sortDir === "asc" ? Infinity : -Infinity;
+        if (typeof av === "string") av = av.toLowerCase();
+        if (typeof bv === "string") bv = bv.toLowerCase();
+        if (av < bv) return sortDir === "asc" ? -1 : 1;
+        if (av > bv) return sortDir === "asc" ? 1 : -1;
+        return 0;
+      });
+
+      updateHeaderIndicators();
+      render();
+    }
+
+    // ---- Rendering -------------------------------------------------------
+    function render() {
+      const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+      if (page > totalPages) page = totalPages;
+      const start = (page - 1) * pageSize;
+      const pageRows = filteredRows.slice(start, start + pageSize);
+
+      const body = el("body");
+      body.innerHTML = "";
+      const frag = document.createDocumentFragment();
+
+      pageRows.forEach(r => {
+        const tr = document.createElement("tr");
+
+        const tdThumb = document.createElement("td");
+        tdThumb.className = "thumb";
+        if (r.thumbnail_url) {
+          const img = document.createElement("img");
+          img.src = r.thumbnail_url; img.loading = "lazy"; img.alt = "";
+          tdThumb.appendChild(img);
+        }
+        tr.appendChild(tdThumb);
+
+        const tdTitle = document.createElement("td");
+        tdTitle.className = "title";
+        const a = document.createElement("a");
+        a.href = r.webpage_url || "#";
+        a.target = "_blank"; a.rel = "noopener";
+        a.textContent = r.title || "(untitled)";
+        tdTitle.appendChild(a);
+        tr.appendChild(tdTitle);
+
+        const tdType = document.createElement("td");
+        tdType.className = "type";
+        if (r.video_type) {
+          const badge = document.createElement("span");
+          badge.className = "badge " + r.video_type;
+          badge.textContent = r.video_type;
+          tdType.appendChild(badge);
+        }
+        tr.appendChild(tdType);
+
+        const tdDate = document.createElement("td");
+        tdDate.className = "date";
+        tdDate.textContent = formatDate(r.upload_date);
+        tr.appendChild(tdDate);
+
+        const tdDur = document.createElement("td");
+        tdDur.className = "num";
+        tdDur.textContent = r.duration_string || (r.duration_seconds ? formatDuration(r.duration_seconds) : "—");
+        tr.appendChild(tdDur);
+
+        ["view_count", "like_count", "comment_count"].forEach(k => {
+          const td = document.createElement("td");
+          td.className = "num";
+          td.textContent = r[k] != null ? Number(r[k]).toLocaleString() : "—";
+          tr.appendChild(td);
+        });
+
+        frag.appendChild(tr);
+      });
+
+      body.appendChild(frag);
+      el("count").textContent = `${filteredRows.length.toLocaleString()} match${filteredRows.length === 1 ? "" : "es"}`;
+      el("pageInfo").textContent = `Page ${page} of ${totalPages}`;
+      el("prevBtn").disabled = page <= 1;
+      el("nextBtn").disabled = page >= totalPages;
+    }
+
+    // ---- Helpers -------------------------------------------------------
+    function formatDate(yyyymmdd) {
+      if (!yyyymmdd || String(yyyymmdd).length !== 8) return "—";
+      const s = String(yyyymmdd);
+      return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+    }
+    function formatDuration(sec) {
+      sec = Math.round(sec);
+      const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+      const pad = n => String(n).padStart(2, "0");
+      return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+    }
+    function escapeHtml(str) {
+      const d = document.createElement("div");
+      d.textContent = str;
+      return d.innerHTML;
+    }
+
+    init();
+  </script>
+</body>
+
+</html>

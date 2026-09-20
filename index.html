@@ -174,6 +174,10 @@
         <label for="f-minviews">Min views</label>
         <input type="number" id="f-minviews" min="0" step="1" placeholder="—">
       </div>
+      <div class="field-row" style="display:block" id="availFilterWrap">
+        <label style="display:block; margin-bottom:6px">Availability</label>
+        <div class="col-list" id="availList"></div>
+      </div>
       <button class="clear-btn" id="f-clear">Clear filters</button>
     </div>
   </div>
@@ -316,6 +320,8 @@ let pageSize = 50;
 let spikesComputed = false;
 let onlySpikes = true;
 let spikeThreshold = 100;
+let availabilityValues = [];         // distinct values found in the db, e.g. ["public", "subscriber_only", ...]
+let selectedAvailability = new Set(); // currently checked/visible values
 
 const el = id => document.getElementById(id);
 
@@ -394,6 +400,7 @@ function loadDatabase(SQL, bytes) {
   });
 
   populateTypeFilter();
+  buildAvailabilityFilter();
   buildColumnsMenu();
   el("status").style.display = "none";
   el("toolbar").style.display = "flex";
@@ -516,6 +523,39 @@ function populateTypeFilter() {
   });
 }
 
+function buildAvailabilityFilter() {
+  const wrap = el("availFilterWrap");
+  if (!availableColumns.includes("availability")) {
+    wrap.style.display = "none";
+    return;
+  }
+  wrap.style.display = "block";
+
+  availabilityValues = [...new Set(allRows.map(r => r.availability || "(unknown)"))].sort();
+  selectedAvailability = new Set(availabilityValues); // all selected by default = no filtering
+
+  const list = el("availList");
+  list.innerHTML = "";
+  availabilityValues.forEach(val => {
+    const row = document.createElement("label");
+    row.className = "col-item";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = true;
+    cb.addEventListener("change", () => {
+      if (cb.checked) selectedAvailability.add(val);
+      else selectedAvailability.delete(val);
+      clearSpikes();
+      updateFiltersBtnState();
+      page = 1;
+      applyFiltersAndRender();
+    });
+    row.appendChild(cb);
+    row.appendChild(document.createTextNode(prettify(val)));
+    list.appendChild(row);
+  });
+}
+
 el("search").addEventListener("input", () => { clearSpikes(); page = 1; applyFiltersAndRender(); });
 el("typeFilter").addEventListener("change", () => { clearSpikes(); page = 1; applyFiltersAndRender(); });
 
@@ -530,6 +570,10 @@ el("typeFilter").addEventListener("change", () => { clearSpikes(); page = 1; app
 
 el("f-clear").addEventListener("click", () => {
   ["f-datefrom", "f-dateto", "f-durmin", "f-durmax", "f-minviews"].forEach(id => { el(id).value = ""; });
+  if (availableColumns.includes("availability")) {
+    selectedAvailability = new Set(availabilityValues);
+    el("availList").querySelectorAll("input[type=checkbox]").forEach(cb => { cb.checked = true; });
+  }
   clearSpikes();
   updateFiltersBtnState();
   page = 1;
@@ -537,8 +581,10 @@ el("f-clear").addEventListener("click", () => {
 });
 
 function updateFiltersBtnState() {
-  const active = ["f-datefrom", "f-dateto", "f-durmin", "f-durmax", "f-minviews"].some(id => el(id).value !== "");
-  el("filtersBtn").classList.toggle("filled", active);
+  const fieldsActive = ["f-datefrom", "f-dateto", "f-durmin", "f-durmax", "f-minviews"].some(id => el(id).value !== "");
+  const availabilityActive = availableColumns.includes("availability")
+    && selectedAvailability.size < availabilityValues.length;
+  el("filtersBtn").classList.toggle("filled", fieldsActive || availabilityActive);
 }
 el("pageSize").addEventListener("change", (e) => { pageSize = parseInt(e.target.value, 10); page = 1; render(); });
 el("prevBtn").addEventListener("click", () => { if (page > 1) { page--; render(); } });
@@ -694,6 +740,11 @@ function getBaseFilteredRows() {
     if (durMaxSec != null) { if (r.duration_seconds == null || r.duration_seconds > durMaxSec) return false; }
 
     if (minViews != null) { if (r.view_count == null || r.view_count < minViews) return false; }
+
+    if (availableColumns.includes("availability")) {
+      const val = r.availability || "(unknown)";
+      if (!selectedAvailability.has(val)) return false;
+    }
 
     return true;
   });
